@@ -1,0 +1,2113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>TV Launcher</title>
+<style>
+  /* =====================================================================
+     TV Launcher — стеклянный интерфейс (в духе tvOS / visionOS)
+     ===================================================================== */
+  :root { --accent:#4c8dff; --ease:cubic-bezier(.2,.8,.2,1); --dim:.8;
+          --muted:rgba(232,238,255,.62); --text:#f5f7ff;
+          --glass:rgba(255,255,255,.09); --glass-hi:rgba(255,255,255,.16);
+          --stroke:rgba(255,255,255,.16); --stroke-hi:rgba(255,255,255,.55);
+          --blur:blur(26px) saturate(170%); }
+  /* Обои */
+  body                      { --bg:#070a14; --w1:#3b5bdb; --w2:#9c36b5; --w3:#0ca678; }
+  body[data-wall="sunset"]  { --bg:#12060f; --w1:#ff7a45; --w2:#d6336c; --w3:#6741d9; }
+  body[data-wall="ocean"]   { --bg:#041018; --w1:#15aabf; --w2:#1c7ed6; --w3:#12b886; }
+  body[data-wall="forest"]  { --bg:#050f0a; --w1:#2f9e44; --w2:#0b7285; --w3:#94d82d; }
+  body[data-wall="graphite"]{ --bg:#0a0b0e; --w1:#495057; --w2:#364fc7; --w3:#868e96; }
+
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:#000; }
+  body { color:var(--text); font-family:"SF Pro Display","Segoe UI Variable Display","Segoe UI",system-ui,Arial,sans-serif; overflow:hidden; -webkit-font-smoothing:antialiased; }
+  svg.i { width:1em; height:1em; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  ::-webkit-scrollbar { width:8px; height:8px; } ::-webkit-scrollbar-thumb { background:rgba(255,255,255,.2); border-radius:4px; }
+  .rail::-webkit-scrollbar, .cchips::-webkit-scrollbar { display:none; }
+  [tabindex]:focus { outline:none; }
+  body.noanim *, body.noanim *::before, body.noanim *::after { animation:none !important; transition:none !important; }
+  body.noglass * { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+  body.noglass { --glass:rgba(40,46,66,.88); --glass-hi:rgba(60,68,92,.95); }
+
+  #app { position:fixed; inset:0; display:flex; flex-direction:column; background:var(--bg); }
+
+  /* ===== Обои: медленно плывущие цветные пятна ===== */
+  .wall { position:absolute; inset:0; overflow:hidden; z-index:0; background:var(--bg); pointer-events:none; }
+  .wall i { position:absolute; width:78vmax; height:78vmax; border-radius:50%; opacity:.6; will-change:transform; }
+  .wall i:nth-child(1) { left:-22vmax; top:-34vmax; background:radial-gradient(circle, var(--w1), transparent 62%); animation:drift1 38s ease-in-out infinite alternate; }
+  .wall i:nth-child(2) { right:-28vmax; top:2vmax;  background:radial-gradient(circle, var(--w2), transparent 62%); animation:drift2 46s ease-in-out infinite alternate; }
+  .wall i:nth-child(3) { left:12vmax; bottom:-52vmax; background:radial-gradient(circle, var(--w3), transparent 62%); animation:drift3 54s ease-in-out infinite alternate; }
+  .wall::after { content:''; position:absolute; inset:0;
+                 background:radial-gradient(ellipse at 50% -10%, rgba(255,255,255,.07), transparent 60%), linear-gradient(transparent 50%, rgba(0,0,0,.38)); }
+  @keyframes drift1 { to { transform:translate(20vmax, 14vmax) scale(1.14); } }
+  @keyframes drift2 { to { transform:translate(-18vmax, 16vmax) scale(.9); } }
+  @keyframes drift3 { to { transform:translate(16vmax, -12vmax) scale(1.18); } }
+
+  /* ===== Включение / выключение "телевизора" ===== */
+  #app.tv-on  { animation:tvOn .95s var(--ease) backwards; }
+  #app.tv-off { animation:tvOff .7s ease-in forwards; }
+  #app.tv-on  > * { animation:kidsIn .95s backwards; }
+  #app.tv-off > * { animation:kidsOut .7s forwards; }
+  @keyframes tvOn {
+    0%   { transform:scale(0,.004); filter:brightness(12); background:#fff; }
+    30%  { transform:scale(1,.004); filter:brightness(12); background:#fff; }
+    65%  { transform:scale(1,1.02); filter:brightness(3);  background:#9aa; }
+    100% { transform:scale(1,1);    filter:brightness(1);  background:var(--bg); }
+  }
+  @keyframes tvOff {
+    0%   { transform:scale(1,1);    filter:brightness(1); background:var(--bg); }
+    45%  { transform:scale(1,.004); filter:brightness(8); background:#fff; }
+    80%  { transform:scale(.02,.004); filter:brightness(12); background:#fff; opacity:1; }
+    100% { transform:scale(0,0); opacity:0; background:#fff; }
+  }
+  @keyframes kidsIn  { 0%,35% { opacity:0; } 100% { opacity:1; } }
+  @keyframes kidsOut { 0% { opacity:1; } 35%,100% { opacity:0; } }
+  @keyframes pop { from { opacity:0; transform:translateY(18px) scale(.94); } to { opacity:1; transform:none; } }
+  @keyframes slideUp { from { opacity:0; transform:translateY(40px); } to { opacity:1; transform:none; } }
+
+  /* Анимация раздела только transform: opacity ломает размытие стекла */
+  .view { display:none; flex:1; flex-direction:column; min-height:0; position:relative; z-index:1; }
+  .view.active { display:flex; animation:viewIn .45s var(--ease) backwards; }
+  @keyframes viewIn { from { transform:translateY(18px) scale(.985); } to { transform:none; } }
+
+  /* =====================================================================
+     Стеклянные поверхности
+     ===================================================================== */
+  .tabs, .ico, #clock, .hero, .clockw, .tile, .rcard, .app, .chip, .cchip, .srow, .smenu, .bar, .field, .key, .card, .pin {
+    background:var(--glass); border:1px solid var(--stroke);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.28), inset 0 -1px 0 rgba(255,255,255,.04), 0 12px 32px rgba(0,0,0,.22);
+    -webkit-backdrop-filter:var(--blur); backdrop-filter:var(--blur);
+  }
+  /* вложенное в стекло — без повторного размытия */
+  .bar .ico, .bar .field, .pcard .chip, .pcard .field, .tabs .tab, .card .x, .key, .card, .smenu-col .smenu.on, #oskPrev {
+    -webkit-backdrop-filter:none; backdrop-filter:none; }
+  .bar .ico { background:transparent; border-color:transparent; box-shadow:none; }
+  .key { box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 4px 10px rgba(0,0,0,.18); }
+
+  /* Фокус маленьких элементов: белая "таблетка" (как в tvOS) */
+  .ico:focus, .ico:hover, .tab:focus, .tab:hover, #clock:focus, #clock:hover, .chip:focus, .chip:hover, .cchip:focus, .cchip:hover,
+  .smenu:focus, .key:focus, .key:hover, .p-clear:focus, .pin:focus, .pin:hover, .pclose:focus, .pclose:hover {
+    background:rgba(255,255,255,.94); color:#0d1020; border-color:#fff;
+    box-shadow:0 0 0 4px rgba(255,255,255,.22), 0 14px 34px rgba(0,0,0,.45); transform:scale(var(--fs,1.08)); z-index:3; }
+  /* Фокус больших карточек: приподнимаются, светлее стекло и белая кромка */
+  .tile:focus, .tile:hover, .rcard:focus, .rcard:hover, .app:focus, .app:hover, .card:focus, .card:hover, .clockw:focus, .clockw:hover {
+    background:var(--glass-hi); border-color:rgba(255,255,255,.22);
+    box-shadow:0 0 42px color-mix(in srgb, var(--c, var(--accent)) 60%, transparent), 0 24px 52px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.4);
+    transform:scale(var(--fs,1.06)); z-index:3; }
+  .ico { --fs:1.12; } .tile, .app { --fs:1.05; } .card { --fs:1.03; } .clockw { --fs:1.02; } .key { --fs:1.1; }
+  .tab:active, .tile:active, .rcard:active, .app:active, .key:active, .chip:active, .cchip:active, .btn:active, .ico:active { transform:scale(.95) !important; }
+  .ico.danger:focus, .ico.danger:hover { background:#ff453a; color:#fff; border-color:#ff453a; box-shadow:0 0 0 4px rgba(255,69,58,.3), 0 14px 34px rgba(0,0,0,.45); }
+
+  /* ===== Верхняя панель ===== */
+  .top { display:flex; align-items:center; gap:14px; padding:18px 40px 8px; font-size:20px; flex:none; }
+  .top .sp { flex:1; }
+  .tabs { display:flex; gap:4px; padding:5px; border-radius:999px; }
+  .tab { position:relative; color:var(--muted); cursor:pointer; padding:9px 24px; border-radius:999px; font-weight:500; background:transparent; border:1px solid transparent;
+         transition:color .2s, background .25s, transform .25s var(--ease), box-shadow .25s; }
+  .tab.on { color:#fff; background:rgba(255,255,255,.2); box-shadow:inset 0 1px 0 rgba(255,255,255,.3); }
+  .ico { position:relative; font-size:24px; color:#e9eeff; cursor:pointer; width:50px; height:50px; border-radius:50%;
+         display:flex; align-items:center; justify-content:center; transition:background .2s, color .2s, transform .25s var(--ease), box-shadow .25s; }
+  .ico.sm { width:44px; height:44px; font-size:22px; }
+  #wifi { cursor:default; background:none; border-color:transparent; box-shadow:none; backdrop-filter:none; width:40px; } #wifi:hover { background:none; transform:none; box-shadow:none; color:#e9eeff; } #wifi.off { opacity:.35; }
+  #clock { font-size:20px; font-weight:500; cursor:pointer; padding:0 20px; height:50px; display:flex; align-items:center; border-radius:999px; font-variant-numeric:tabular-nums;
+           transition:background .2s, transform .2s var(--ease), box-shadow .25s; }
+  .badge { position:absolute; top:-3px; right:-4px; min-width:20px; height:20px; border-radius:10px; background:var(--accent);
+           color:#fff; font-size:12px; font-weight:600; display:none; align-items:center; justify-content:center; padding:0 5px; box-shadow:0 2px 8px rgba(0,0,0,.4); }
+  .badge.on { display:flex; animation:pop .3s var(--ease); }
+
+  /* ===== Главная ===== */
+  #homeScroll { flex:1; overflow-y:auto; padding:10px 40px 44px; scroll-behavior:smooth; }
+  .stage { display:flex; gap:20px; height:clamp(190px, 28vh, 280px); flex:none; padding:4px; margin:-4px; }
+
+  /* Часы-виджет */
+  .clockw { flex:none; width:clamp(310px, 27vw, 450px); border-radius:30px; padding:20px 30px; display:flex; flex-direction:column; justify-content:center; cursor:pointer;
+            position:relative; overflow:hidden; transition:transform .3s var(--ease), box-shadow .3s, background .3s; }
+  .clockw::before { content:''; position:absolute; inset:0; background:radial-gradient(120% 90% at 0% 0%, rgba(255,255,255,.2), transparent 58%); pointer-events:none; }
+  .cw-greet { font-size:15px; font-weight:500; color:var(--muted); letter-spacing:.06em; text-transform:uppercase; margin-bottom:4px; position:relative; }
+  .cw-time { font-size:clamp(66px, 10vh, 100px); font-weight:200; line-height:1; letter-spacing:-3px; font-variant-numeric:tabular-nums; position:relative;
+             text-shadow:0 6px 30px rgba(0,0,0,.35); white-space:nowrap; }
+  .cw-time small { font-size:.3em; font-weight:300; letter-spacing:0; color:var(--muted); margin-left:10px; vertical-align:.9em; }
+  .cw-date { font-size:20px; font-weight:500; margin-top:8px; position:relative; }
+  .cw-bar { height:4px; border-radius:2px; background:rgba(255,255,255,.15); margin-top:16px; overflow:hidden; position:relative; }
+  .cw-bar i { display:block; height:100%; width:0; background:linear-gradient(90deg, rgba(255,255,255,.45), #fff); border-radius:2px; transition:width 1s linear; }
+  .cw-sub { font-size:13px; color:var(--muted); margin-top:7px; position:relative; }
+
+  /* Баннер */
+  .hero { position:relative; flex:1; min-width:0; border-radius:30px; overflow:hidden; container-type:inline-size; }
+  .slide { position:absolute; inset:0; display:flex; flex-direction:row; align-items:center; gap:clamp(10px, 4cqw, 28px); padding:0 clamp(20px, 7cqw, 48px);
+           opacity:0; transform:scale(1.04); transition:opacity .8s ease, transform 1.4s ease; pointer-events:none; }
+  .slide.on { opacity:1; transform:none; pointer-events:auto; }
+  .slide .txt { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
+  .slide h1 { margin:0 0 6px; font-size:38px; font-weight:700; letter-spacing:-.5px; line-height:1.1; transform:translateX(-24px); opacity:0; transition:transform .7s var(--ease) .1s, opacity .7s .1s; }
+  .slide p  { margin:0 0 18px; font-size:17px; color:rgba(255,255,255,.82); transform:translateX(-24px); opacity:0; transition:transform .7s var(--ease) .2s, opacity .7s .2s; }
+  .slide.on h1, .slide.on p { transform:none; opacity:1; }
+  .slide .bg-ico { flex:none; font-size:clamp(52px, 20cqw, 130px); opacity:.7; display:flex; transform:rotate(-8deg); animation:float 6s ease-in-out infinite; }   /* иконка в потоке рядом с текстом, а не поверх него */
+  @keyframes float { 50% { transform:translateY(-6px) rotate(-3deg); } }
+  @container (max-width:340px) { .slide .bg-ico { display:none; } }
+  .slide .bg-ico img { width:1em; height:1em; filter:drop-shadow(0 10px 30px rgba(0,0,0,.4)); }
+  .btn { align-self:flex-start; display:flex; align-items:center; gap:8px; font-size:17px; font-weight:600; background:rgba(255,255,255,.94); color:#0d1020;
+         padding:10px 26px; border-radius:30px; cursor:pointer; transition:transform .2s var(--ease), box-shadow .2s; box-shadow:0 8px 22px rgba(0,0,0,.3); }
+  .btn:hover, .btn:focus { transform:scale(1.08); box-shadow:0 0 0 4px rgba(255,255,255,.35), 0 12px 30px rgba(0,0,0,.4); }
+  .dots { position:absolute; right:26px; bottom:18px; display:flex; gap:8px; z-index:2; }
+  .dots i { width:8px; height:8px; border-radius:4px; background:rgba(255,255,255,.4); transition:width .35s var(--ease), background .3s; }
+  .dots i.on { width:26px; background:#fff; }
+
+  .sec { font-size:27px; font-weight:700; letter-spacing:-.3px; margin:30px 0 2px; }
+  .sub { font-size:16px; color:var(--muted); margin:14px 0 0; font-weight:500; }
+  .rail { display:flex; gap:16px; overflow-x:auto; padding:14px 12px 24px; margin:0 -12px; scroll-behavior:smooth; scrollbar-width:none; }
+  .rail.apps { display:grid; grid-auto-flow:column; grid-template-rows:repeat(2, 98px); grid-auto-columns:238px; gap:16px; }
+
+  /* Плитки приложений */
+  .ic { width:54px; height:54px; flex:none; display:flex; align-items:center; justify-content:center; }
+  .ic img { width:46px; height:46px; border-radius:12px; object-fit:contain; filter:drop-shadow(0 4px 10px rgba(0,0,0,.45)); }
+  /* Chromium: чёткий логотип, рисуется кодом (не размытая иконка) */
+  .cr { display:inline-block; width:1em; height:1em; border-radius:50%; position:relative; flex:none;
+        background:conic-gradient(from -60deg, #ea4335 0 120deg, #fbbc04 120deg 240deg, #34a853 240deg 360deg);
+        box-shadow:0 2px 6px rgba(0,0,0,.35); }
+  .cr::before { content:''; position:absolute; inset:19%; border-radius:50%; background:#fff; }
+  .cr::after  { content:''; position:absolute; inset:27%; border-radius:50%; background:radial-gradient(circle at 35% 30%, #7fb2ff, #1a73e8 70%); }
+  .ic.sv { color:#fff; font-size:34px; }
+  .tile { display:flex; align-items:center; justify-content:flex-start; gap:16px; padding:0 18px; border-radius:24px; cursor:pointer;
+          font-size:19px; font-weight:600; animation:pop .5s var(--ease) backwards; animation-delay:calc(var(--i,0) * 40ms);
+          background:linear-gradient(135deg, color-mix(in srgb, var(--c,#666) 62%, transparent), rgba(255,255,255,.06));
+          transition:transform .28s var(--ease), box-shadow .28s, background .28s; }
+  .tile > span:last-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tile:focus, .tile:hover { background:linear-gradient(135deg, color-mix(in srgb, var(--c,#888) 88%, transparent), rgba(255,255,255,.2)); }
+  .tile:focus, .tile:hover { box-shadow:0 0 46px color-mix(in srgb, var(--c,#789) 75%, transparent), 0 24px 52px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.35); border-color:rgba(255,255,255,.2); }
+  .tile.add { background:var(--glass); border-style:dashed; border-color:rgba(255,255,255,.3); }
+  .tile.add:focus, .tile.add:hover { background:var(--glass-hi); }
+
+  .rcard { flex:none; width:268px; height:150px; border-radius:22px; background-color:rgba(255,255,255,.07); background-position:center; background-size:cover; background-repeat:no-repeat; position:relative;
+           overflow:hidden; cursor:pointer; animation:pop .5s var(--ease) backwards; animation-delay:calc(var(--i,0) * 40ms);
+           transition:transform .28s var(--ease), box-shadow .28s; }
+  .rcard:focus, .rcard:hover { --fs:1.06; }
+  .rcard .ph { position:absolute; inset:0 0 50px 0; display:flex; align-items:center; justify-content:center; }
+  .rcard .ph img { width:56px; height:56px; border-radius:14px; filter:drop-shadow(0 4px 10px rgba(0,0,0,.45)); }
+  .rcard .tx { position:absolute; left:0; right:0; bottom:0; padding:10px 16px; background:linear-gradient(transparent, rgba(0,0,0,.75) 70%); }
+  .rcard b { display:block; font-size:16px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rcard small { color:rgba(255,255,255,.72); font-size:12.5px; }
+  .rcard .prog { position:absolute; left:0; bottom:0; height:4px; background:#fff; border-radius:0 2px 2px 0; }
+  .empty-rail { color:var(--muted); font-size:15px; padding:18px 6px; }
+
+  /* ===== Каталог ===== */
+  #catalog { padding:0 40px; }
+  .head { display:flex; align-items:center; gap:16px; padding:16px 0 6px; font-size:28px; font-weight:700; letter-spacing:-.3px; flex:none; }
+  .head .sp { flex:1; }
+  .head .count { font-size:15px; font-weight:500; color:var(--muted); letter-spacing:0; }
+  #cSearch { width:min(380px, 34vw); font-size:18px; font-weight:400; padding:11px 22px; border-radius:999px; }
+  .cchips { display:flex; gap:10px; overflow-x:auto; padding:12px 6px 14px; margin:0 -6px; flex:none; scrollbar-width:none; scroll-behavior:smooth; }
+  .cchip { flex:none; padding:9px 20px; border-radius:999px; font-size:16px; font-weight:500; cursor:pointer; color:#e9eeff;
+           transition:background .2s, color .2s, transform .2s var(--ease), box-shadow .2s; }
+  .cchip.on { background:color-mix(in srgb, var(--accent) 78%, transparent); border-color:rgba(255,255,255,.4); color:#fff; }
+  .cchip.on:focus, .cchip.on:hover { background:#fff; color:#0d1020; }
+  #catalogBody { flex:1; overflow-y:auto; padding:0 6px 40px; margin:0 -6px; scroll-behavior:smooth; }
+  .cat-title { margin:24px 0 14px; color:var(--muted); font-size:14px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; display:flex; gap:10px; align-items:center; }
+  .cat-title em { font-style:normal; font-size:12px; padding:2px 9px; border-radius:10px; background:rgba(255,255,255,.12); letter-spacing:0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px,1fr)); gap:16px; padding:6px; margin:-6px; }
+  .app { display:flex; gap:16px; align-items:center; padding:14px 18px; border-radius:22px; cursor:pointer; position:relative;
+         animation:pop .45s var(--ease) backwards; animation-delay:calc(var(--i,0) * 22ms); transition:transform .28s var(--ease), box-shadow .28s, background .28s; }
+  .app .tx { min-width:0; flex:1; }
+  .app b { display:block; font-size:18px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .app small { display:block; color:var(--muted); font-size:14px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .app .dl { font-size:24px; color:#fff; opacity:.8; display:flex; flex:none; }
+  .app .dl .pct { font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; min-width:42px; text-align:right; }
+  .app .pgb { position:absolute; left:20px; right:20px; bottom:7px; height:3px; border-radius:2px; background:rgba(255,255,255,.16); overflow:hidden; display:none; }
+  .app .pgb i { display:block; height:100%; width:var(--p, 0%); background:#fff; border-radius:2px; transition:width .25s linear; }
+  .app.busy .pgb { display:block; } .app.busy .pgb.ind i { width:35%; animation:indet 1.1s ease-in-out infinite; }
+  @keyframes indet { from { margin-left:-35%; } to { margin-left:100%; } }
+  .pin { width:42px; height:42px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center; font-size:20px; cursor:pointer; transition:background .2s, transform .2s var(--ease), color .2s; }
+  .pin.done { color:#4ade80; }
+  .nores { color:var(--muted); font-size:19px; text-align:center; padding:70px 0; }
+
+  /* ===== Браузер ===== */
+  .bar { display:flex; align-items:center; gap:6px; padding:7px 12px; margin:12px 40px 12px; border-radius:999px; flex:none; }
+  .bar .ico { width:42px; height:42px; font-size:21px; }
+  input.field { flex:1; font-size:17px; padding:10px 20px; border-radius:999px; color:var(--text); outline:none; font-family:inherit;
+                transition:border-color .2s, box-shadow .2s, background .2s; }
+  input.field::placeholder { color:var(--muted); }
+  input.field:focus { background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.75); box-shadow:0 0 0 4px rgba(255,255,255,.18); }
+  .bar .field { background:rgba(255,255,255,.1); box-shadow:none; }
+  #webviews { position:relative; flex:1; background:transparent; }
+  webview { display:none; position:absolute; inset:0; width:100%; height:100%; background:#fff; }
+  webview.on { display:inline-flex; }
+  #bstart { position:absolute; inset:0; background:transparent; display:flex; flex-direction:column; align-items:center; padding:5vh 40px 0; overflow-y:auto; z-index:2; }
+  #bstart.hide { display:none; }
+  #bstart h2 { display:flex; align-items:center; gap:16px; font-weight:300; font-size:42px; margin:0 0 24px; letter-spacing:-.5px; animation:slideUp .5s var(--ease) backwards; }
+  #bstart h2 img { width:52px; height:52px; border-radius:14px; }
+  #sInput { width:min(780px,90%); flex:none; font-size:23px; padding:16px 30px; border-radius:999px; animation:slideUp .5s var(--ease) .08s backwards; }
+  #bstart .grid { width:min(940px,100%); margin-top:36px; }
+
+  /* ===== Настройки ===== */
+  #settings { padding:0 40px 24px; }
+  .sbody { flex:1; display:flex; gap:30px; min-height:0; padding-top:10px; }
+  .smenu-col { width:300px; display:flex; flex-direction:column; gap:8px; flex:none; }
+  .smenu { display:flex; align-items:center; gap:14px; padding:15px 20px; border-radius:20px; font-size:19px; font-weight:500; color:#dfe6fb; cursor:pointer;
+           transition:background .2s, transform .25s var(--ease), color .2s; animation:pop .45s var(--ease) backwards; animation-delay:calc(var(--i,0) * 50ms); }
+  .smenu .i { font-size:24px; }
+  .smenu.on { background:rgba(255,255,255,.2); color:#fff; }
+  .smenu:focus { --fs:1; transform:translateX(8px); }
+  .spane { flex:1; overflow-y:auto; padding:0 10px 20px 4px; margin-right:-6px; }
+  .spane h3 { margin:2px 0 18px; font-weight:700; font-size:30px; letter-spacing:-.4px; animation:slideUp .4s var(--ease) backwards; }
+  .srow { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:15px 22px; margin-bottom:10px; border-radius:20px;
+          font-size:18px; animation:pop .4s var(--ease) backwards; animation-delay:calc(var(--i,0) * 40ms); }
+  .srow .v { color:var(--muted); text-align:right; }
+  .srow .ctl { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .chip { padding:9px 20px; border-radius:999px; cursor:pointer; font-size:16px; font-weight:500; transition:background .2s, color .2s, transform .2s var(--ease), box-shadow .2s; }
+  .chip.on { background:color-mix(in srgb, var(--accent) 80%, transparent); border-color:rgba(255,255,255,.45); color:#fff; }
+  .chip.on:focus, .chip.on:hover { background:#fff; color:#0d1020; }
+  .sw { display:inline-block; width:16px; height:16px; border-radius:50%; vertical-align:-3px; margin-right:8px; box-shadow:0 0 0 2px rgba(255,255,255,.55); }
+
+  /* ===== Боковая панель вкладок ===== */
+  #handle { position:fixed; left:0; top:50%; transform:translateY(-50%); width:22px; height:150px; z-index:30; background:var(--glass);
+            border:1px solid var(--stroke); border-left:0; -webkit-backdrop-filter:var(--blur); backdrop-filter:var(--blur);
+            border-radius:0 16px 16px 0; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#fff; font-size:16px;
+            transition:width .25s var(--ease), background .2s; }
+  #handle:hover, #handle:focus { width:36px; background:rgba(255,255,255,.3); }
+  #handle .badge { top:6px; right:auto; left:50%; transform:translateX(-50%); }
+  #backdrop { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .3s; }
+  #backdrop.on { opacity:1; pointer-events:auto; }
+  #panel { position:fixed; left:0; top:0; bottom:0; width:360px; z-index:50; background:rgba(22,26,40,.5); transform:translateX(-102%);
+           -webkit-backdrop-filter:blur(44px) saturate(180%); backdrop-filter:blur(44px) saturate(180%); border-right:1px solid var(--stroke);
+           transition:transform .38s var(--ease); display:flex; flex-direction:column; box-shadow:12px 0 50px rgba(0,0,0,.5), inset -1px 0 0 rgba(255,255,255,.08); }
+  #panel.open { transform:none; }
+  .p-head { display:flex; align-items:center; justify-content:space-between; padding:22px 22px 12px; font-size:24px; font-weight:700; }
+  .p-clear { font-size:14px; font-weight:500; color:#fff; cursor:pointer; padding:8px 16px; border-radius:999px; background:rgba(255,255,255,.14); transition:background .2s, transform .2s var(--ease); }
+  #list { flex:1; overflow-y:auto; padding:8px 18px 18px; display:flex; flex-direction:column; gap:14px; }
+  .empty { color:var(--muted); text-align:center; margin-top:40px; }
+  .card { border-radius:22px; overflow:hidden; cursor:pointer; flex:none; animation:cardIn .35s var(--ease) backwards; transition:transform .25s var(--ease), box-shadow .25s; }
+  .card.cur { border-color:rgba(255,255,255,.6); }
+  @keyframes cardIn { from { opacity:0; transform:translateX(-30px); } to { opacity:1; transform:none; } }
+  .thumb { height:150px; background:rgba(255,255,255,.07) center/cover no-repeat; display:flex; align-items:center; justify-content:center; }
+  .thumb img { width:56px; height:56px; border-radius:14px; filter:drop-shadow(0 4px 10px rgba(0,0,0,.45)); }
+  .meta { display:flex; align-items:center; gap:10px; padding:11px 14px; }
+  .meta > img { width:26px; height:26px; flex:none; border-radius:7px; }
+  .meta .t { flex:1; min-width:0; } .meta b { display:block; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .meta small { color:var(--muted); font-size:12px; }
+  .x { font-size:20px; display:flex; padding:7px; border-radius:50%; color:#e9eeff; transition:background .2s, transform .2s; }
+  .x:hover, .x:focus { background:#ff453a; color:#fff; transform:rotate(90deg); }
+
+  /* ===== Всплывающие окна ===== */
+  .pop { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; background:rgba(5,7,14,.5);
+         -webkit-backdrop-filter:blur(18px) saturate(140%); backdrop-filter:blur(18px) saturate(140%); opacity:0; pointer-events:none; transition:opacity .28s; }
+  .pop.on { opacity:1; pointer-events:auto; }
+  .pcard { position:relative; width:580px; max-width:92vw; padding:38px 44px; border-radius:36px;
+           background:linear-gradient(145deg, rgba(255,255,255,.2), rgba(255,255,255,.07)); border:1px solid rgba(255,255,255,.28);
+           box-shadow:0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.45);
+           transform:scale(.9) translateY(20px); transition:transform .4s var(--ease); }
+  .pop.on .pcard { transform:none; }
+  .pclose { position:absolute; top:16px; right:16px; font-size:22px; display:flex; padding:8px; border-radius:50%; cursor:pointer; background:rgba(255,255,255,.14); transition:background .2s, transform .2s var(--ease); }
+  .cp-time { font-size:104px; font-weight:200; line-height:1; letter-spacing:-4px; font-variant-numeric:tabular-nums; }
+  .cp-time span { font-size:46px; color:var(--muted); letter-spacing:0; }
+  .cp-date { font-size:24px; font-weight:500; margin:10px 0 20px; }
+  .cp-chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:22px; }
+  .cp-chips i { font-style:normal; font-size:14px; padding:7px 14px; border-radius:999px; background:rgba(255,255,255,.14); color:#e9eeff; }
+  .cp-fact { border-top:1px solid rgba(255,255,255,.2); padding-top:18px; }
+  .cp-label { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+  #cpFact { font-size:18px; line-height:1.5; min-height:52px; } #cpFact b { font-size:22px; }
+  .pcard h3 { margin:0 0 20px; font-weight:700; font-size:27px; letter-spacing:-.3px; }
+  .pcard .field { width:100%; display:block; margin-bottom:20px; background:rgba(255,255,255,.12); box-shadow:none; }
+  .prow { display:flex; gap:10px; justify-content:flex-end; }
+
+  /* ===== Спящий режим ===== */
+  #sleep { position:fixed; inset:0; z-index:200; background:rgba(0,0,0,var(--dim)); opacity:0; pointer-events:none; transition:opacity 1.4s ease; cursor:none;
+           -webkit-backdrop-filter:blur(18px); backdrop-filter:blur(18px); display:flex; align-items:center; justify-content:center; }
+  #sleep.on { opacity:1; pointer-events:auto; }
+  .sl-wrap { text-align:center; opacity:.0; animation:slDrift 120s ease-in-out infinite alternate; }
+  #sleep.on .sl-wrap { opacity:1; }
+  .sl-time { font-size:clamp(90px, 18vh, 190px); font-weight:200; letter-spacing:-5px; line-height:1; color:rgba(255,255,255,.5); font-variant-numeric:tabular-nums; }
+  .sl-date { font-size:22px; color:rgba(255,255,255,.32); margin-top:8px; font-weight:500; }
+  .sl-hint { position:absolute; bottom:6vh; left:0; right:0; text-align:center; font-size:15px; letter-spacing:.08em; color:rgba(255,255,255,.28); animation:slHint 6s ease forwards; }
+  @keyframes slHint { 0%,70% { opacity:1; } 100% { opacity:0; } }
+  @keyframes slDrift { from { transform:translate(-4vw,-3vh); } to { transform:translate(4vw,3vh); } }
+
+  /* ===== Экранная клавиатура ===== */
+  #osk { position:fixed; left:0; right:0; bottom:0; z-index:80; background:rgba(20,24,38,.55); border-top:1px solid rgba(255,255,255,.2); padding:14px 3vw 18px;
+         -webkit-backdrop-filter:blur(44px) saturate(180%); backdrop-filter:blur(44px) saturate(180%);
+         transform:translateY(105%); transition:transform .4s var(--ease); box-shadow:0 -14px 50px rgba(0,0,0,.5); }
+  #osk.open { transform:none; }
+  #oskPrev { height:46px; margin:0 auto 12px; max-width:900px; padding:0 22px; border-radius:23px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); display:flex; align-items:center; font-size:21px; overflow:hidden; white-space:nowrap; }
+  #oskPrev::after { content:''; width:2px; height:26px; background:#fff; margin-left:2px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .krow { display:flex; justify-content:center; gap:9px; margin-bottom:9px; }
+  .key { flex:1 1 0; max-width:84px; height:clamp(44px, 6vh, 62px); display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:500; border-radius:14px;
+         cursor:pointer; user-select:none; border-color:rgba(255,255,255,.12); background:rgba(255,255,255,.13); transition:background .15s, color .15s, transform .2s var(--ease), box-shadow .2s; }
+  .key.wide { flex:1.6 1 0; max-width:140px; } .key.space { flex:6 1 0; max-width:480px; } .key.act { background:rgba(255,255,255,.07); font-size:17px; }
+  .key.go { background:var(--accent); border-color:transparent; }
+  .key.on { background:var(--accent); color:#fff; }
+
+  /* ===== Обои-фото и стеклянные часы (стиль «гора») ===== */
+  .wall::after { background:linear-gradient(180deg, rgba(0,0,0,.34) 0%, transparent 26%, rgba(3,7,18,.18) 52%, rgba(3,7,18,.78) 100%),
+                            linear-gradient(rgba(0,0,0,var(--wdim,.2)), rgba(0,0,0,var(--wdim,.2))); }
+  body.photo .wall i { display:none; }
+  .wp { position:absolute; inset:-3%; background-size:cover; background-position:center 40%; opacity:0; transition:opacity 2.4s ease; will-change:opacity, transform; }
+  .wp.on { opacity:1; }
+  .wp.kb { animation:kenb 50s ease-in-out infinite alternate; }
+  @keyframes kenb { from { transform:scale(1); } to { transform:scale(1.09) translate3d(-1.5%,-1%,0); } }
+
+  .stage { align-items:stretch; gap:30px; height:clamp(210px, 35vh, 380px); }
+  .hero { flex:none; width:clamp(300px, 28vw, 480px); align-self:center; height:clamp(170px, 24vh, 260px); }
+  .slide h1 { font-size:clamp(20px, min(3vh, 6.4cqw), 34px); } .slide p { font-size:clamp(13px, 3.8cqw, 16px); margin-bottom:14px; }
+  .clockw, .clockw:focus, .clockw:hover { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; cursor:pointer; position:relative; padding:0 10px; width:auto; border-radius:36px;
+            background:none; border:0; box-shadow:none; -webkit-backdrop-filter:none; backdrop-filter:none; transform:none; }
+  .clockw::before { display:none; }
+  .cw-date { font:700 clamp(20px, 3.2vh, 34px)/1.1 "SF Pro Rounded","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif; color:rgba(255,255,255,.92); text-shadow:0 2px 20px rgba(0,0,0,.4); margin:0 0 .6vh 8px; }
+  .cw-time { font-family:"SF Pro Rounded","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif; font-size:clamp(110px, 27vh, 300px); font-weight:800; line-height:.9; letter-spacing:-.045em; font-variant-numeric:tabular-nums; white-space:nowrap; position:relative; width:max-content; max-width:100%; text-shadow:none;
+             background:linear-gradient(180deg, rgba(255,255,255,.95) 6%, rgba(255,255,255,.46) 100%); -webkit-background-clip:text; background-clip:text; color:transparent;
+             -webkit-text-stroke:1px rgba(255,255,255,.3); filter:drop-shadow(0 12px 44px rgba(8,16,40,.4)); transition:filter .4s; }
+  .cw-time small { display:none; }
+  .clockw:focus .cw-time, .clockw:hover .cw-time { filter:drop-shadow(0 0 36px rgba(255,255,255,.55)) drop-shadow(0 12px 44px rgba(8,16,40,.4)); }
+  .cw-cap { display:flex; align-items:center; gap:8px; margin:1.2vh 0 0 10px; font-size:16px; font-weight:600; color:rgba(255,255,255,.88); text-shadow:0 1px 12px rgba(0,0,0,.6); min-height:22px; opacity:0; transition:opacity 1.2s; }
+  .cw-cap.on { opacity:1; }
+  body[data-clock="classic"] .cw-time { font-weight:200; background:none; color:#fff; -webkit-text-stroke:0; filter:drop-shadow(0 6px 30px rgba(0,0,0,.4)); }
+  body[data-clock="classic"] .cw-time small { display:inline; font-size:.28em; margin-left:10px; vertical-align:.9em; color:var(--muted); }
+  body[data-clock="off"] .clockw { display:none; }
+  body[data-clock="off"] .hero { align-self:flex-start; width:min(100%, 900px); flex:1; }
+
+  /* Выбор фото в настройках */
+  .wgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:16px; padding:8px 6px 14px; margin:0 -6px; }
+  .wth { position:relative; aspect-ratio:16/9; border-radius:22px; background:#1b2036 center/cover no-repeat; overflow:hidden; cursor:pointer; animation:pop .45s var(--ease) backwards; animation-delay:calc(var(--i,0) * 30ms);
+         box-shadow:0 10px 26px rgba(0,0,0,.35); transition:transform .3s var(--ease), box-shadow .3s; }
+  .wth span { position:absolute; left:0; right:0; bottom:0; padding:26px 14px 10px; background:linear-gradient(transparent, rgba(0,0,0,.78)); display:flex; flex-direction:column; }
+  .wth b { font-size:15px; font-weight:600; } .wth small { font-size:12.5px; color:rgba(255,255,255,.75); }
+  .wth .chk { position:absolute; top:10px; right:10px; width:30px; height:30px; border-radius:50%; background:var(--accent); display:none; align-items:center; justify-content:center; font-size:18px; }
+  .wth.on .chk { display:flex; }
+  .wth.on { box-shadow:inset 0 0 0 3px var(--accent), 0 10px 26px rgba(0,0,0,.35); }
+  .wth:focus, .wth:hover { transform:scale(1.05); z-index:3; box-shadow:0 0 40px color-mix(in srgb, var(--accent) 50%, transparent), 0 22px 46px rgba(0,0,0,.5); }
+  .wth.on:focus { box-shadow:inset 0 0 0 3px var(--accent), 0 0 40px color-mix(in srgb, var(--accent) 50%, transparent), 0 22px 46px rgba(0,0,0,.5); }
+  .sgrp { margin:24px 0 8px 6px; font-size:15px; font-weight:600; color:var(--muted); }
+
+  /* ===== Плитки-превью 16:9, как на Android TV ===== */
+  .rail.apps { grid-template-rows:repeat(2, clamp(118px, 19vh, 150px)); grid-auto-columns:clamp(218px, 19vw, 268px); gap:18px; }
+  .tile { position:relative; overflow:hidden; flex-direction:column; justify-content:center; align-items:center; gap:8px; padding:0 12px; border-radius:22px; text-align:center; font-size:17px; }
+  .tile > * { position:relative; z-index:2; }
+  .tile::before { content:''; position:absolute; inset:0; z-index:0; background:var(--bn) center/cover no-repeat; opacity:0; transition:opacity .7s, transform .8s var(--ease); }
+  .tile::after  { content:''; position:absolute; inset:0; z-index:1; pointer-events:none; background:linear-gradient(180deg, rgba(0,0,0,.05) 35%, rgba(0,0,0,.78)); opacity:0; transition:opacity .5s; }
+  .tile.has-bn::before, .tile.has-bn::after { opacity:1; }
+  .tile.has-bn:focus::before, .tile.has-bn:hover::before { transform:scale(1.06); }
+  .tile.has-bn { flex-direction:row; justify-content:flex-start; align-items:flex-end; gap:10px; padding:0 14px 12px; text-align:left; font-size:16px; }
+  .tile.has-bn .ic { width:34px; height:34px; } .tile.has-bn .ic img { width:30px; height:30px; border-radius:8px; } .tile.has-bn .cr { font-size:30px !important; }
+  .tile.has-bn > span:last-child { text-shadow:0 2px 10px rgba(0,0,0,.7); }
+  .tile:not(.has-bn) .ic { width:58px; height:58px; } .tile:not(.has-bn) .ic img { width:52px; height:52px; border-radius:14px; } .tile:not(.has-bn) .cr { font-size:50px !important; }
+  .tile.add { gap:6px; }
+
+  /* =====================================================================
+     v0.6 — «прошивка»: анимации включения / выключения / запуска, настройки в стиле ТВ
+     ===================================================================== */
+  @property --r { syntax:'<percentage>'; inherits:false; initial-value:-25%; }
+  #app.tv-on, #app.tv-on > *, #app.tv-off, #app.tv-off > * { animation:none; }
+  #veil { position:fixed; inset:0; z-index:300; background:#000; pointer-events:none; display:grid; place-items:center;
+          -webkit-mask-image:radial-gradient(circle at 50% 50%, transparent var(--r), #000 calc(var(--r) + 28%));
+          mask-image:radial-gradient(circle at 50% 50%, transparent var(--r), #000 calc(var(--r) + 28%)); }
+  #veil.done { display:none; }
+  body.noanim #veil { display:none !important; }
+  #veil.boot { animation:veilOpen 1.9s cubic-bezier(.5,0,.15,1) .95s both; }
+  #veil.shut { animation:veilClose 1s cubic-bezier(.65,0,.3,1) .25s both; }
+  @keyframes veilOpen  { from { --r:-28%; } to { --r:128%; } }
+  @keyframes veilClose { from { --r:128%; } to { --r:-28%; } }
+  .vlogo { width:140px; height:140px; border-radius:32px; opacity:0; filter:drop-shadow(0 24px 70px rgba(120,100,255,.6)); }
+  .vring { position:absolute; width:140px; height:140px; border-radius:50%; border:2px solid rgba(255,255,255,.55); opacity:0; }
+  #veil.boot .vlogo { animation:vlogoIn 1.1s var(--ease) both; }
+  #veil.boot .vring { animation:vring 1.6s ease-out .15s both; }
+  #veil.shut .vlogo { display:none; }
+  @keyframes vlogoIn { 0% { opacity:0; transform:scale(.72); filter:blur(14px) drop-shadow(0 24px 70px rgba(120,100,255,.6)); } 100% { opacity:1; transform:none; } }
+  @keyframes vring { 0% { opacity:.8; transform:scale(.8); } 100% { opacity:0; transform:scale(3.4); } }
+  .vdot { position:absolute; width:14px; height:14px; border-radius:50%; background:#fff; opacity:0;
+          box-shadow:0 0 26px 10px rgba(255,255,255,.75), 0 0 110px 40px rgba(130,160,255,.4); }
+  #veil.shut .vdot { animation:vdot 1.25s ease both; }
+  @keyframes vdot { 0%,62% { opacity:0; transform:scale(.2); } 80% { opacity:1; transform:scale(1.2); } 100% { opacity:0; transform:scale(.05); } }
+  #app.tv-on .view.active { animation:uiBoot 2.1s var(--ease) 1.15s backwards; }
+  #app.tv-on .wall { animation:wallBoot 2.8s ease 1.1s backwards; }
+  #app.tv-on .tile, #app.tv-on .rcard { animation-delay:calc(1.45s + var(--i,0) * 45ms); }
+  @keyframes uiBoot { from { transform:scale(1.1); } to { transform:none; } }
+  @keyframes wallBoot { from { transform:scale(1.18); filter:brightness(.4); } to { transform:none; filter:none; } }
+  #app.tv-off .view.active { animation:uiOff .95s cubic-bezier(.6,0,.9,.5) forwards; }
+  @keyframes uiOff { to { transform:scale(.9); } }
+
+  /* переходы между разделами: вглубь — справа, назад — слева */
+  .view.active { animation:viewFwd .6s var(--ease) backwards; }
+  body[data-dir="back"] .view.active { animation-name:viewBack; }
+  @keyframes viewFwd  { from { transform:translateX(6vw) scale(.965); } to { transform:none; } }
+  @keyframes viewBack { from { transform:translateX(-4vw) scale(1.035); } to { transform:none; } }
+
+  /* запуск и закрытие приложений */
+  #morph { position:fixed; z-index:150; display:none; overflow:hidden; pointer-events:none; align-items:center; justify-content:center;
+           box-shadow:0 30px 90px rgba(0,0,0,.55); will-change:left, top, width, height, clip-path, opacity; }
+  #morph .mi { display:flex; animation:miz .7s var(--ease) both; }
+  @keyframes miz { from { transform:scale(.9); } to { transform:scale(1.8); } }
+  #morph .ic { width:64px; height:64px; display:flex; align-items:center; justify-content:center; }
+  #morph .ic img { width:56px; height:56px; border-radius:14px; filter:drop-shadow(0 6px 18px rgba(0,0,0,.45)); }
+  #morph .cr { font-size:56px !important; }
+  .pop .pcard { transition:transform .55s cubic-bezier(.34,1.4,.4,1); transform:scale(.86) translateY(28px); }
+
+  #toast { position:fixed; left:50%; bottom:6vh; z-index:250; transform:translate(-50%, 30px); padding:14px 28px; border-radius:999px; font-size:18px; font-weight:600;
+           background:rgba(20,24,40,.66); border:1px solid rgba(255,255,255,.22); -webkit-backdrop-filter:blur(30px) saturate(170%); backdrop-filter:blur(30px) saturate(170%);
+           box-shadow:0 18px 50px rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .35s, transform .5s var(--ease); max-width:80vw; text-align:center; }
+  #toast.on { opacity:1; transform:translate(-50%, 0); }
+  #osd { position:fixed; right:44px; top:44px; z-index:250; padding:16px 26px; border-radius:22px; font-size:22px; font-weight:700; display:flex; align-items:center; gap:14px;
+         background:rgba(20,24,40,.66); border:1px solid rgba(255,255,255,.22); -webkit-backdrop-filter:blur(30px) saturate(170%); backdrop-filter:blur(30px) saturate(170%);
+         box-shadow:0 18px 50px rgba(0,0,0,.45); opacity:0; transform:translateY(-14px); pointer-events:none; transition:opacity .3s, transform .4s var(--ease); }
+  #osd.on { opacity:1; transform:none; }
+  #dimmer { position:fixed; inset:0; pointer-events:none; z-index:190; }
+  #dimmer i { position:absolute; inset:0; opacity:0; }
+  #dimB { background:#000; }
+  #dimW { background:rgb(255,150,60); mix-blend-mode:multiply; }
+  body.nocursor, body.nocursor * { cursor:none !important; }
+  body.hc { --stroke:rgba(255,255,255,.42); --glass:rgba(8,12,24,.66); --glass-hi:rgba(30,38,64,.82); --muted:rgba(240,244,255,.86); }
+  #sleep.noclock .sl-wrap { display:none; }
+  .cw-time small:not(:empty) { display:inline-block; font-size:.2em; font-weight:700; letter-spacing:0; margin:.3em 0 0 .3em; vertical-align:top; -webkit-text-stroke:0; }
+  #wifi { cursor:pointer; }
+  #wifi:focus { background:rgba(255,255,255,.94); color:#0d1020; box-shadow:0 0 0 4px rgba(255,255,255,.22); transform:scale(1.12); }
+  .smenu-col { overflow-y:auto; padding:4px 10px 4px 4px; margin:4px 0 4px -4px; scrollbar-width:none; gap:6px; }
+  .smenu-col::-webkit-scrollbar { display:none; }
+  .smenu { padding:12px 20px; }
+
+  /* меню плитки */
+  .mrow { display:flex; align-items:center; gap:14px; padding:15px 20px; margin-bottom:10px; border-radius:18px; font-size:19px; font-weight:600; cursor:pointer; background:rgba(255,255,255,.1);
+          transition:background .2s, color .2s, transform .25s var(--ease); }
+  .mrow svg.i { font-size:22px; }
+  .mrow:focus, .mrow:hover { background:rgba(255,255,255,.92); color:#0d1020; transform:scale(1.03); }
+  .mrow.danger:focus, .mrow.danger:hover { background:#ff453a; color:#fff; }
+
+  /* ===== Настройки в стиле ТВ: крупные строки, ← → меняют значение ===== */
+  .srow { cursor:pointer; position:relative; padding:16px 24px; transition:transform .28s var(--ease), background .25s, box-shadow .25s, border-color .25s; }
+  .srow.info { cursor:default; }
+  .srow.info:hover { transform:none; background:var(--glass); }
+  .srow .rico { display:flex; font-size:28px; flex:none; width:34px; justify-content:center; color:#fff; opacity:.9; margin-right:-4px; }
+  .srow .rico img { width:28px; height:28px; border-radius:7px; }
+  .srow .lb { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+  .srow .lb b { font-weight:600; font-size:19px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .srow .lb small { font-size:14px; color:var(--muted); font-weight:400; line-height:1.3; }
+  .srow:focus, .srow[tabindex]:hover { background:linear-gradient(90deg, color-mix(in srgb, var(--accent) 58%, transparent), rgba(255,255,255,.13));
+          border-color:color-mix(in srgb, var(--accent) 60%, rgba(255,255,255,.4)); transform:translateX(6px);
+          box-shadow:0 14px 36px rgba(0,0,0,.35), 0 0 34px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .srow .chip:hover { background:var(--glass); color:inherit; transform:none; box-shadow:none; }
+  .srow:focus .chip { background:rgba(255,255,255,.22); }
+  .arow:hover, .arow:focus { transform:none; background:var(--glass); box-shadow:none; }
+  .stp { display:flex; align-items:center; gap:10px; font-weight:600; font-size:18px; white-space:nowrap; }
+  .stp .ar { display:flex; font-size:22px; opacity:.35; padding:6px; border-radius:50%; transition:opacity .2s, background .2s; }
+  .srow:focus .stp .ar { opacity:1; }
+  .stp .ar:hover { background:rgba(255,255,255,.22); opacity:1; }
+  .stp .sv { min-width:90px; text-align:center; }
+  .swt { width:60px; height:34px; border-radius:17px; background:rgba(255,255,255,.22); position:relative; flex:none; transition:background .3s; }
+  .swt::after { content:''; position:absolute; top:3px; left:3px; width:28px; height:28px; border-radius:50%; background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.4); transition:transform .35s cubic-bezier(.34,1.5,.4,1); }
+  .swt.on { background:var(--accent); }
+  .swt.on::after { transform:translateX(26px); }
+  .vbar { width:230px; height:10px; border-radius:5px; background:rgba(255,255,255,.2); overflow:hidden; }
+  .vbar i { display:block; height:100%; border-radius:5px; background:#fff; width:0; transition:width .15s; }
+  .vnum { min-width:52px; text-align:right; }
+  .sgrp { margin:26px 0 10px 6px; font-size:15px; font-weight:600; color:var(--muted); }
+  .snote { margin:2px 8px 12px; font-size:15px; line-height:1.5; color:var(--muted); max-width:760px; }
+  .slist { display:contents; }
+  .chip.danger:focus, .chip.danger:hover { background:#ff453a; color:#fff; border-color:#ff453a; }
+  .wnet.cur, .bdev.cur { border-color:color-mix(in srgb, var(--accent) 70%, transparent); }
+  .wnet .ctl { align-items:center; gap:12px; font-size:22px; }
+  .wnet .ctl .v { font-size:15px; }
+  .nhero { display:flex; align-items:center; gap:22px; padding:22px 28px; margin-bottom:14px; border-radius:26px;
+           background:linear-gradient(120deg, color-mix(in srgb, var(--accent) 45%, rgba(10,14,28,.4)), rgba(255,255,255,.06)); border:1px solid var(--stroke);
+           box-shadow:inset 0 1px 0 rgba(255,255,255,.28), 0 14px 36px rgba(0,0,0,.28); animation:pop .5s var(--ease) backwards; }
+  .nhero.off { background:linear-gradient(120deg, rgba(255,69,58,.4), rgba(255,255,255,.05)); }
+  .nh-i { font-size:56px; display:flex; }
+  .nhero b { display:block; font-size:26px; font-weight:700; letter-spacing:-.3px; }
+  .nhero small { display:block; font-size:16px; color:rgba(255,255,255,.78); margin-top:4px; }
+  .dbar { margin:2px 6px 14px; }
+  .dtrack { height:12px; border-radius:6px; background:rgba(255,255,255,.18); overflow:hidden; }
+  .dtrack i { display:block; height:100%; width:0; border-radius:6px; background:linear-gradient(90deg, var(--accent), #fff); transition:width .8s var(--ease); }
+  .dtxt { margin-top:8px; font-size:15px; color:var(--muted); }
+
+  /* диалоги */
+  .pop.top { align-items:flex-start; padding-top:6vh; }
+  #dlg .pcard { width:640px; }
+  #dlg h3 { margin:0 0 10px; }
+  #dlgM { font-size:18px; line-height:1.5; color:rgba(255,255,255,.82); margin-bottom:20px; }
+  .kt { display:inline-block; font-size:58px; font-weight:800; letter-spacing:-1px; padding:6px 26px; margin:6px 0; border-radius:20px; background:rgba(255,255,255,.16); color:#fff; }
+  #dlgM small { font-size:16px; color:var(--muted); }
+  .dlgrow { display:flex; gap:10px; align-items:center; margin-bottom:20px; }
+  .dlgrow .field { margin:0; }
+  #dlg .prow { flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div id="app" class="tv-on">
+  <div class="wall"><i></i><i></i><i></i><b class="wp" id="wpA"></b><b class="wp" id="wpB"></b></div>
+
+  <!-- ГЛАВНАЯ -->
+  <div id="home" class="view active">
+    <div class="top">
+      <span class="ico" tabindex="0" data-i="search" title="Поиск" onclick="openBrowser()"></span>
+      <div class="tabs">
+        <span class="tab on" tabindex="0">Главная</span>
+        <span class="tab" tabindex="0" onclick="show('catalog')">Добавить</span>
+        <span class="tab" tabindex="0" onclick="openBrowser()">Браузер</span>
+      </div>
+      <div class="sp"></div>
+      <span class="ico" id="wifi" data-i="wifi"></span>
+      <span class="ico" tabindex="0" data-i="settings" title="Настройки" onclick="openSettings()"></span>
+      <span id="clock" tabindex="0" onclick="openClock()"></span>
+      <span class="ico" tabindex="0" data-i="moon" title="Спящий режим" id="sleepBtn" onclick="sleepOn()"></span>
+      <span class="ico danger" tabindex="0" data-i="power" title="Выключить" onclick="powerOff()"></span>
+    </div>
+    <div id="homeScroll">
+      <div class="stage">
+        <div class="clockw" id="clockw" tabindex="0" onclick="openClock()">
+          <div class="cw-date" id="cwDate"></div>
+          <div class="cw-time"><span id="cwHM"></span><small id="cwS"></small></div>
+          <div class="cw-cap" id="cwCap"></div>
+        </div>
+        <div class="hero" id="hero"><div class="dots" id="dots"></div></div>
+      </div>
+      <div class="sec">Приложения</div>
+      <div class="rail apps" id="apps"></div>
+      <div class="sec">Библиотека</div>
+      <div class="sub">Продолжить просмотр</div>
+      <div class="rail" id="railContinue"></div>
+      <div class="sub">История</div>
+      <div class="rail" id="railHistory"></div>
+    </div>
+  </div>
+
+  <!-- КАТАЛОГ -->
+  <div id="catalog" class="view">
+    <div class="head">
+      <span class="ico" tabindex="0" data-i="home" onclick="show('home')"></span>
+      <span>Добавить</span><span class="count" id="cCount"></span>
+      <span class="sp"></span>
+      <input id="cSearch" class="field" placeholder="Найти приложение или сервис">
+    </div>
+    <div class="cchips" id="cChips"></div>
+    <div id="catalogBody"></div>
+  </div>
+
+  <!-- БРАУЗЕР -->
+  <div id="browser" class="view">
+    <div class="bar">
+      <span class="ico" tabindex="0" data-i="home" title="Свернуть" onclick="minimize()"></span>
+      <span class="ico" tabindex="0" data-i="back" onclick="act('goBack')"></span>
+      <span class="ico" tabindex="0" data-i="forward" onclick="act('goForward')"></span>
+      <span class="ico" tabindex="0" data-i="reload" onclick="act('reload')"></span>
+      <input id="url" class="field" placeholder="Адрес или поисковый запрос">
+      <span class="ico" tabindex="0" data-i="plus" title="Новая вкладка" onclick="openBrowser()"></span>
+      <span class="ico" tabindex="0" title="Открытые вкладки" onclick="openPanel()"><span data-i="tabs" style="display:flex"></span><b class="badge" id="badge2"></b></span>
+      <span class="ico" tabindex="0" data-i="x" title="Закрыть вкладку" onclick="closeTab(activeId)"></span>
+    </div>
+    <div id="webviews">
+      <div id="bstart">
+        <h2><span class="cr" style="font-size:52px"></span>Chromium</h2>
+        <input id="sInput" class="field" placeholder="Поиск в интернете или адрес сайта">
+        <div class="grid" id="bgrid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- НАСТРОЙКИ -->
+  <div id="settings" class="view">
+    <div class="head"><span class="ico" tabindex="0" data-i="home" onclick="show('home')"></span><span>Настройки</span></div>
+    <div class="sbody"><div class="smenu-col" id="smenu"></div><div class="spane" id="spane"></div></div>
+  </div>
+
+  <!-- ПАНЕЛЬ ВКЛАДОК -->
+  <div id="handle" tabindex="0" title="Открытые вкладки" onclick="openPanel()"><span data-i="chevron" style="display:flex"></span><b class="badge" id="badge"></b></div>
+  <div id="backdrop" onclick="closePanel()"></div>
+  <aside id="panel">
+    <div class="p-head"><span>Открытые</span><span class="p-clear" tabindex="0" onclick="closeAll()">Закрыть все</span></div>
+    <div id="list"></div>
+  </aside>
+
+  <!-- ЧАСЫ -->
+  <div id="clockPop" class="pop" onclick="if(event.target===this)closeClock()">
+    <div class="pcard">
+      <span class="pclose" tabindex="0" data-i="x" onclick="closeClock()"></span>
+      <div class="cp-time"><b id="cpHM" style="font-weight:200"></b><span id="cpS"></span></div>
+      <div class="cp-date" id="cpDate"></div>
+      <div class="cp-chips" id="cpChips"></div>
+      <div class="cp-fact"><div class="cp-label">В этот день</div><div id="cpFact">Загрузка…</div></div>
+    </div>
+  </div>
+
+  <!-- ДОБАВИТЬ САЙТ -->
+  <div id="addPop" class="pop" onclick="if(event.target===this)closeAdd()">
+    <div class="pcard">
+      <h3>Добавить сайт на главный экран</h3>
+      <input id="addUrl" class="field" placeholder="Например: kinopoisk.ru">
+      <div class="prow"><span class="chip" tabindex="0" onclick="closeAdd()">Отмена</span><span class="chip on" tabindex="0" id="addOk">Добавить</span></div>
+    </div>
+  </div>
+
+  <!-- СПЯЩИЙ РЕЖИМ -->
+  <div id="sleep" tabindex="-1">
+    <div class="sl-wrap"><div class="sl-time" id="slT"></div><div class="sl-date" id="slD"></div></div>
+    <div class="sl-hint">Нажмите любую кнопку</div>
+  </div>
+
+
+  <!-- ДИАЛОГ -->
+  <div id="dlg" class="pop">
+    <div class="pcard">
+      <h3 id="dlgT"></h3>
+      <div id="dlgM"></div>
+      <div class="dlgrow" id="dlgRow"><input id="dlgIn" class="field" autocomplete="off"><span class="chip" tabindex="0" id="dlgEye">Показать</span></div>
+      <div class="prow" id="dlgB"></div>
+    </div>
+  </div>
+
+  <!-- МЕНЮ ПЛИТКИ -->
+  <div id="tilePop" class="pop" onclick="if(event.target===this)closeTileMenu()">
+    <div class="pcard" style="width:460px">
+      <h3 id="tmTitle"></h3>
+      <div class="mrow" tabindex="0" id="tmOpen"><span data-i="play" style="display:flex"></span>Открыть</div>
+      <div class="mrow" tabindex="0" id="tmL"><span data-i="back" style="display:flex"></span>Сдвинуть левее</div>
+      <div class="mrow" tabindex="0" id="tmR"><span data-i="forward" style="display:flex"></span>Сдвинуть правее</div>
+      <div class="mrow danger" tabindex="0" id="tmDel"><span data-i="x" style="display:flex"></span>Убрать с главного экрана</div>
+    </div>
+  </div>
+
+  <!-- КЛАВИАТУРА -->
+  <div id="osk"><div id="oskPrev"></div><div id="oskKeys"></div></div>
+</div>
+<div id="morph"></div>
+<div id="veil" class="boot"><img class="vlogo" src="icon.png" alt=""><i class="vring"></i><i class="vdot"></i></div>
+<div id="toast"></div>
+<div id="osd"></div>
+<div id="dimmer"><i id="dimB"></i><i id="dimW"></i></div>
+
+<script>
+  const $ = s => document.querySelector(s);
+  const DROID = window.AndroidTV || null;                  // мост к Android-приложению (null в Windows/Electron и в обычном браузере)
+  const APP_VERSION = '0.6.0';
+  const store = { get:(k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+                  set:(k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+
+  /* ---------- Иконки ---------- */
+  const ICONS = {
+    search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    settings:'<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+    wifi:'<path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M2 9a14.5 14.5 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1" fill="currentColor"/>',
+    home:'<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+    back:'<path d="M15 6l-6 6 6 6"/>', forward:'<path d="M9 6l6 6-6 6"/>', chevron:'<path d="M9 6l6 6-6 6"/>', down:'<path d="M6 9l6 6 6-6"/>',
+    reload:'<path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/>',
+    play:'<path d="M7 4l13 8-13 8z" fill="currentColor"/>',
+    x:'<path d="M6 6l12 12M18 6L6 18"/>', plus:'<path d="M12 5v14M5 12h14"/>',
+    tabs:'<rect x="3" y="7" width="14" height="12" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v10"/>',
+    grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    power:'<path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/>',
+    download:'<path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
+    bs:'<path d="M21 5H9l-6 7 6 7h12z"/><path d="M13 9l4 6M17 9l-4 6"/>',
+    enter:'<path d="M20 5v7H6"/><path d="M10 8l-4 4 4 4"/>',
+    shift:'<path d="M12 4l8 9h-5v7H9v-7H4z"/>',
+    remote:'<rect x="7" y="2" width="10" height="20" rx="3"/><circle cx="12" cy="8" r="1.5"/><path d="M10 13h4M10 17h4"/>',
+    image:'<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/>',
+    globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3 3 15 0 18c-3-3-3-15 0-18z"/>',
+    info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.5" r="1" fill="currentColor"/>',
+    moon:'<path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/>',
+    external:'<path d="M7 17L17 7"/><path d="M8 7h9v9"/>',
+    check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    mount:'<path d="M3 19l6-10 4 6 3-4 5 8z"/><circle cx="17" cy="6" r="1.6"/>', pin:'<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    bulb:'<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>'
+  };
+  const icon = n => `<svg class="i" viewBox="0 0 24 24">${ICONS[n]}</svg>`;
+  const fav = d => `https://www.google.com/s2/favicons?domain=${d}&sz=128`;
+  const domainOf = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+  const visible = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  function mk(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
+  document.querySelectorAll('[data-i]').forEach(e => e.innerHTML = icon(e.dataset.i));
+
+  /* ---------- Настройки (сохраняются) ---------- */
+  const DEFAULTS = { accent:'#4c8dff', scale:1, anim:true, osk:'auto', search:'google', fullscreen:false, wall:'aurora', glass:true, sleepDim:0.8,
+                     wallMode:'photo', wallPhoto:'rockies', wallColl:'all', wallEvery:300, wallDim:.2, wallMotion:true, wallCaption:true, clockStyle:'glass', banners:true,
+                     brightness:1, night:0, contrast:false, launchAnim:'morph', uiSounds:false, bgAudio:false, oskLang:'ru', hideCursor:true,
+                     autoSleep:0, sleepClock:true, offTimer:0, keepAwake:false, pad:true, pin:'', deviceName:'TV Launcher', startApp:'',
+                     pageZoom:1, seconds:false, clock24:true };
+  const savedS = store.get('tv.settings', {});
+  if (store.get('tv.wallv', 0) < 1) { savedS.wallPhoto = 'rockies'; savedS.wallMode = 'photo'; store.set('tv.wallv', 1); }   // один раз возвращаем горные обои
+  const S = Object.assign({}, DEFAULTS, savedS); S.offTimer = 0;
+  const ENGINES = { google:['Google','https://www.google.com/search?q='], ddg:['DuckDuckGo','https://duckduckgo.com/?q='],
+                    bing:['Bing','https://www.bing.com/search?q='], yandex:['Яндекс','https://yandex.ru/search/?text='] };
+  function applySettings() {
+    const r = document.documentElement.style, b = document.body;
+    r.setProperty('--accent', S.accent); r.setProperty('--dim', S.sleepDim); r.setProperty('--wdim', S.wallDim);
+    b.classList.toggle('noanim', !S.anim); b.classList.toggle('noglass', !S.glass); b.classList.toggle('hc', !!S.contrast);
+    b.dataset.wall = S.wall; b.dataset.clock = S.clockStyle;
+    $('#dimB').style.opacity = String(1 - S.brightness); $('#dimW').style.opacity = String(S.night);
+    if (!S.hideCursor) b.classList.remove('nocursor');
+    if (window.api) window.api.setZoom(S.scale);
+    if (typeof tabs !== 'undefined') tabs.forEach(zoomTab);
+    if (typeof applyWall === 'function' && typeof wp !== 'undefined') applyWall();
+  }
+  const saveS = () => store.set('tv.settings', S);
+
+  /* ---------- Данные ---------- */
+  const DEFAULT_HOME = [
+    { name:'Chromium', domain:'chromium.org', color:'#2d6cdf', url:'tv:chromium', special:'chromium' },
+    { name:'YouTube',  domain:'youtube.com', color:'#e62117', url:'https://www.youtube.com' },
+    { name:'Netflix',  domain:'netflix.com', color:'#b00710', url:'https://www.netflix.com' },
+    { name:'Кинопоиск', domain:'kinopoisk.ru', color:'#ff5500', url:'https://www.kinopoisk.ru' },
+    { name:'Twitch',   domain:'twitch.tv',   color:'#7c3aed', url:'https://www.twitch.tv' },
+    { name:'Rutube',   domain:'rutube.ru',   color:'#0b6bd6', url:'https://rutube.ru' },
+    { name:'YT Music', domain:'music.youtube.com', color:'#e11d48', url:'https://music.youtube.com' },
+    { name:'Spotify',  domain:'spotify.com', color:'#12a150', url:'https://open.spotify.com' }
+  ];
+  const PALETTE = ['#0f766e', '#b45309', '#9d174d', '#4338ca', '#047857', '#be123c', '#0369a1'];
+  // web:true — открывается во встроенном браузере; иначе — официальная страница загрузки
+  const CATALOG = [
+    { cat:'Кино и ТВ онлайн', apps:[
+      { name:'YouTube',     desc:'Видео, музыка и трансляции',        url:'https://www.youtube.com',        domain:'youtube.com', web:true },
+      { name:'Netflix',     desc:'Фильмы и сериалы',                   url:'https://www.netflix.com',        domain:'netflix.com', web:true },
+      { name:'Кинопоиск',   desc:'Фильмы, сериалы, ТВ-каналы',         url:'https://www.kinopoisk.ru',       domain:'kinopoisk.ru', web:true },
+      { name:'Okko',        desc:'Онлайн-кинотеатр',                   url:'https://okko.tv',                domain:'okko.tv', web:true },
+      { name:'ivi',         desc:'Фильмы, сериалы, мультфильмы',       url:'https://www.ivi.ru',             domain:'ivi.ru', web:true },
+      { name:'Wink',        desc:'Кино, сериалы и ТВ',                 url:'https://wink.ru',                domain:'wink.ru', web:true },
+      { name:'KION',        desc:'Сериалы и фильмы от МТС',            url:'https://kion.ru',                domain:'kion.ru', web:true },
+      { name:'PREMIER',     desc:'Сериалы и шоу',                      url:'https://premier.one',            domain:'premier.one', web:true },
+      { name:'Rutube',      desc:'Видеохостинг',                       url:'https://rutube.ru',              domain:'rutube.ru', web:true },
+      { name:'VK Видео',    desc:'Видео, трансляции, клипы',           url:'https://vkvideo.ru',             domain:'vkvideo.ru', web:true },
+      { name:'Twitch',      desc:'Стримы и игры',                      url:'https://www.twitch.tv',          domain:'twitch.tv', web:true },
+      { name:'Disney+',     desc:'Disney, Marvel, Star Wars',          url:'https://www.disneyplus.com',     domain:'disneyplus.com', web:true },
+      { name:'Prime Video', desc:'Сериалы и фильмы Amazon',            url:'https://www.primevideo.com',     domain:'primevideo.com', web:true },
+      { name:'Max',         desc:'HBO и Warner Bros.',                 url:'https://www.max.com',            domain:'max.com', web:true },
+      { name:'Apple TV',    desc:'Оригинальные сериалы Apple',         url:'https://tv.apple.com',           domain:'apple.com', web:true } ]},
+    { cat:'Музыка и радио', apps:[
+      { name:'YouTube Music', desc:'Музыка и клипы',                   url:'https://music.youtube.com',      domain:'music.youtube.com', web:true },
+      { name:'Spotify',       desc:'Веб-плеер Spotify',                url:'https://open.spotify.com',       domain:'spotify.com', web:true },
+      { name:'Яндекс Музыка', desc:'Музыка, подкасты, Моя волна',      url:'https://music.yandex.ru',        domain:'music.yandex.ru', web:true },
+      { name:'VK Музыка',     desc:'Музыка и подборки',                url:'https://music.vk.com',           domain:'vk.com', web:true },
+      { name:'SoundCloud',    desc:'Треки независимых авторов',        url:'https://soundcloud.com',         domain:'soundcloud.com', web:true } ]},
+    { cat:'Браузеры', apps:[
+      { name:'Chromium', desc:'Встроенный браузер', url:'tv:chromium', domain:'chromium.org', c:'#2d6cdf', special:'chromium' }, ]},
+    { cat:'Пульт и удалённый доступ', apps:[
+      { name:'Unified Remote', desc:'Телефон как пульт для ПК',        url:'https://www.unifiedremote.com/download', id:'unifiedremote', domain:'unifiedremote.com' } ]},
+    { cat:'Полезное онлайн', apps:[
+      { name:'Gmail',      desc:'Почта Google',                        url:'https://mail.google.com',        domain:'mail.google.com', web:true } ]}
+  ];
+  if (DROID) { const i = CATALOG.findIndex(g => g.cat === 'Пульт и удалённый доступ'); if (i >= 0) CATALOG.splice(i, 1); }   // серверная часть Unified Remote нужна только на ПК
+  let homeApps = store.get('tv.home', null);
+  if (!homeApps) {                                       // первый запуск: переносим прежние свои плитки
+    homeApps = [...DEFAULT_HOME.map(a => ({ ...a })), ...store.get('tv.apps', []).map(o => ({ name:o.name, domain:o.domain, url:o.url, color:o.color }))];
+    store.set('tv.home', homeApps);
+  }
+  const saveHome = () => store.set('tv.home', homeApps);
+  const colorFor = dom => { let h = 0; for (const ch of dom) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; };
+  const appIcon = a => a.special === 'chromium' ? `<span class="ic"><i class="cr" style="font-size:44px"></i></span>` : `<span class="ic"><img src="${fav(a.domain)}" alt=""></span>`;
+  let history = store.get('tv.history', []);
+  let cont = store.get('tv.continue', []);
+
+  /* ---------- Главная: баннер ---------- */
+  const SLIDES = [
+    { color:'#e62117', title:'Смотрите YouTube', text:'Видео, музыка и трансляции на большом экране.', img:fav('youtube.com'), go:() => openSite('https://www.youtube.com') },
+    { color:'#b00710', title:'Фильмы и сериалы', text:'Продолжите просмотр там, где остановились.', img:fav('netflix.com'), go:() => openSite('https://www.netflix.com') },
+    { color:'#6d4cff', title:'Ваши приложения', text:'Кино, музыка, ТВ-каналы и стримы.', svg:'grid', go:() => show('catalog') }
+  ];
+  const hero = $('#hero'), dots = $('#dots');
+  SLIDES.forEach((s, i) => {
+    const el = mk('div', 'slide' + (i === 0 ? ' on' : ''));
+    el.style.background = `linear-gradient(115deg, ${s.color}d9, ${s.color}33 62%, transparent)`;
+    el.innerHTML = `<div class="txt"><h1>${s.title}</h1><p>${s.text}</p><div class="btn" tabindex="0">${icon('play')} Открыть</div></div><div class="bg-ico">${s.img ? `<img src="${s.img}" alt="">` : icon(s.svg)}</div>`;
+    el.querySelector('.btn').onclick = s.go;
+    hero.insertBefore(el, dots);
+    dots.insertAdjacentHTML('beforeend', `<i class="${i === 0 ? 'on' : ''}"></i>`);
+  });
+  let cur = 0;
+  setInterval(() => {
+    const sl = hero.querySelectorAll('.slide'), dt = dots.children;
+    sl[cur].classList.remove('on'); dt[cur].classList.remove('on');
+    cur = (cur + 1) % sl.length;
+    sl[cur].classList.add('on'); dt[cur].classList.add('on');
+  }, 6000);
+
+  /* ---------- Главная: приложения (2 ряда, листаются) ---------- */
+  const bnMem = new Map();
+  function loadBanner(a) {                               // превью сайта (og:image) из интернета, с кэшем на диске
+    if (!window.api) return Promise.resolve(null);
+    if (!bnMem.has(a.url)) bnMem.set(a.url, window.api.bannerGet(a.domain, a.url).then(src => src ? new Promise(r => { const im = new Image(); im.onload = () => r(src); im.onerror = () => r(null); im.src = src; }) : null).catch(() => null));
+    return bnMem.get(a.url);
+  }
+  function renderApps() {
+    const box = $('#apps'); box.innerHTML = '';
+    homeApps.forEach((a, i) => {
+      const t = mk('div', 'tile'); t.tabIndex = 0; t.style.setProperty('--i', i); t.style.setProperty('--c', a.color || '#556');
+      t.dataset.key = a.url; t.dataset.domain = a.domain; t.dataset.name = a.name; if (a.native) t.dataset.id = a.id;
+      t.addEventListener('contextmenu', e => { e.preventDefault(); openTileMenu(t); });
+      t.innerHTML = appIcon(a); t.appendChild(mk('span', '')).textContent = a.name;
+      t.onclick = () => a.special === 'chromium' ? openBrowser(t) : a.native ? openNative(a, t) : openSite(a.url, t);
+      box.appendChild(t);
+      if (S.banners && !a.special && !a.native) loadBanner(a).then(src => { if (src && t.isConnected) { t.style.setProperty('--bn', `url("${src}")`); t.classList.add('has-bn'); } });
+    });
+    const add = mk('div', 'tile add'); add.tabIndex = 0; add.style.setProperty('--i', homeApps.length);
+    add.innerHTML = `<span class="ic sv">${icon('plus')}</span><span>Добавить</span>`;
+    add.onclick = () => show('catalog');
+    box.appendChild(add);
+  }
+
+  /* ---------- Главная: библиотека ---------- */
+  function renderLibrary() {
+    const rc = $('#railContinue'); rc.innerHTML = '';
+    if (!cont.length) rc.innerHTML = '<div class="empty-rail">Здесь появятся фильмы и видео, которые вы не досмотрели до конца.</div>';
+    cont.forEach((it, i) => {
+      const c = mk('div', 'rcard'); c.tabIndex = 0; c.style.setProperty('--i', i); c.dataset.kind = 'cont'; c.dataset.url = it.url;
+      if (it.img) c.style.backgroundImage = `url("${it.img.replace(/"/g, '%22')}")`;
+      c.innerHTML = `<div class="ph">${it.img ? '' : `<img src="${fav(it.domain)}" alt="">`}</div>
+        <div class="tx"><b></b><small></small></div><div class="prog" style="width:${Math.round(it.t / it.d * 100)}%"></div>`;
+      c.querySelector('b').textContent = it.title || it.domain;
+      c.querySelector('small').textContent = `осталось ~${Math.max(1, Math.round((it.d - it.t) / 60))} мин · ${it.domain}`;
+      c.onclick = () => openSite(resumeUrl(it));
+      rc.appendChild(c);
+    });
+    const rh = $('#railHistory'); rh.innerHTML = '';
+    if (!history.length) rh.innerHTML = '<div class="empty-rail">Сайты, которые вы откроете в браузере, появятся здесь.</div>';
+    history.slice(0, 24).forEach((it, i) => {
+      const c = mk('div', 'rcard'); c.tabIndex = 0; c.style.setProperty('--i', i); c.dataset.kind = 'hist'; c.dataset.url = it.url;
+      c.innerHTML = `<div class="ph"><img src="${fav(it.domain)}" alt=""></div><div class="tx"><b></b><small></small></div>`;
+      c.querySelector('b').textContent = it.title || it.domain;
+      c.querySelector('small').textContent = it.domain;
+      c.onclick = () => openSite(it.url);
+      rh.appendChild(c);
+    });
+  }
+  function resumeUrl(it) {
+    try { const u = new URL(it.url);
+      if (/(^|\.)youtube\.com$/.test(u.hostname) || u.hostname === 'youtu.be') { u.searchParams.set('t', Math.floor(it.t) + 's'); return u.toString(); }
+    } catch {}
+    return it.url;
+  }
+  function addHistory(url, title) {
+    if (!/^https?:/.test(url)) return;
+    history = history.filter(h => h.url !== url);
+    history.unshift({ url, title: title || '', domain: domainOf(url), ts: Date.now() });
+    history = history.slice(0, 40); store.set('tv.history', history);
+  }
+  function setHistoryTitle(url, title) { const h = history.find(x => x.url === url); if (h && title) { h.title = title; store.set('tv.history', history); } }
+  function onVideo(m) {
+    if (!/^https?:/.test(m.url) || !m.d || m.d < 120) return;          // короткие ролики не считаем фильмом
+    cont = cont.filter(c => c.url !== m.url);
+    if (m.t / m.d < 0.95) cont.unshift({ url:m.url, title:m.title, t:m.t, d:m.d, img:m.img || '', domain:domainOf(m.url), ts:Date.now() });
+    cont = cont.slice(0, 12); store.set('tv.continue', cont);
+  }
+
+  /* ---------- Каталог ---------- */
+  function appCard(a, i, sub) {
+    const ico = a.svg ? `<span class="ic sv">${icon(a.svg)}</span>` : appIcon(a);
+    const c = mk('div', 'app', `${ico}<div class="tx"><b></b><small></small></div>`);
+    c.tabIndex = 0; c.style.setProperty('--i', Math.min(i, 24));
+    c.querySelector('b').textContent = a.name; c.querySelector('small').textContent = sub !== undefined ? sub : a.desc;
+    return c;
+  }
+  const isPinned = a => homeApps.some(h => h.url === a.url);
+  function togglePin(a) {                                 // кнопка ✓/+ : добавить на главный экран или убрать
+    if (isPinned(a)) homeApps = homeApps.filter(h => h.url !== a.url);
+    else homeApps.push({ name:a.name, domain:a.domain, url:a.url, color:a.c || colorFor(a.domain), special:a.special, ...(a.id ? { id:a.id, native:true } : {}) });
+    saveHome(); renderApps(); return isPinned(a);
+  }
+  let cFilter = 'all';
+  function renderChips() {
+    const box = $('#cChips'); box.innerHTML = '';
+    [['all', 'Все'], ...CATALOG.map(g => [g.cat, g.cat])].forEach(([id, label]) => {
+      const c = mk('span', 'cchip' + (cFilter === id ? ' on' : ''), esc(label)); c.tabIndex = 0;
+      c.onclick = () => { cFilter = id; box.querySelectorAll('.cchip').forEach(x => x.classList.toggle('on', x === c)); renderCatalog(); };
+      box.appendChild(c);
+    });
+  }
+  function renderCatalog() {
+    const cb = $('#catalogBody'); cb.innerHTML = '';
+    const q = $('#cSearch').value.trim().toLowerCase();
+    let total = 0, n = 0;
+    if (!q && cFilter === 'all') {
+      const g0 = mk('div', 'grid'), own = appCard({ name:'Свой сайт', svg:'plus' }, n++, 'Добавить любой адрес на главный экран');
+      own.onclick = openAdd; g0.appendChild(own); cb.appendChild(g0);
+    }
+    CATALOG.forEach(g => {
+      if (cFilter !== 'all' && g.cat !== cFilter) return;
+      const list = g.apps.filter(a => !q || (a.name + ' ' + a.desc + ' ' + g.cat).toLowerCase().includes(q));
+      if (!list.length) return;
+      total += list.length;
+      cb.appendChild(mk('div', 'cat-title', `${esc(g.cat)} <em>${list.length}</em>`));
+      const grid = mk('div', 'grid');
+      list.forEach(a => {
+        const c = appCard(a, n++);
+        const native = !a.web && !a.special && !!a.id;                           // обычная программа: скачать -> установить -> запустить
+        c.insertAdjacentHTML('beforeend', `<span class="dl">${icon(a.web || a.special ? 'external' : 'download')}</span>`);
+        if (native) { c.dataset.id = a.id; c.dataset.desc = a.desc; c.insertAdjacentHTML('beforeend', '<span class="pgb"><i></i></span>'); }
+        c.onclick = () => a.special ? openBrowser(c) : native ? openNative(a, c) : openSite(a.url, c);
+        if (a.web || a.special || native) {                                      // можно закрепить на главной одной кнопкой
+          const pin = mk('span', 'pin' + (isPinned(a) ? ' done' : ''), icon(isPinned(a) ? 'check' : 'plus'));
+          pin.tabIndex = 0; pin.title = isPinned(a) ? 'Убрать с главного экрана' : 'На главный экран';
+          pin.onclick = e => { e.stopPropagation(); const on = togglePin(a); pin.classList.toggle('done', on); pin.innerHTML = icon(on ? 'check' : 'plus'); pin.title = on ? 'Убрать с главного экрана' : 'На главный экран'; };
+          c.insertBefore(pin, c.querySelector('.dl'));
+        }
+        grid.appendChild(c);
+      });
+      cb.appendChild(grid);
+    });
+    if (!total) cb.appendChild(mk('div', 'nores', 'Ничего не найдено'));
+    $('#cCount').textContent = total + ' шт.';
+    paintNative(); refreshInstalled();
+  }
+
+  /* ---------- Программы: скачивание, установка, запуск ---------- */
+  let installed = {};
+  const busy = new Set(), STAGE = { download:'Скачивание…', install:'Установка…', launch:'Запуск…' };
+  function paintNative() {                                // подписи и значки: «скачать» у не установленных, «запустить» у установленных
+    document.querySelectorAll('.app[data-id]').forEach(c => {
+      const id = c.dataset.id, on = !!installed[id];
+      if (busy.has(id)) return;
+      c.querySelector('small').textContent = on ? 'Установлено · ' + c.dataset.desc : c.dataset.desc;
+      c.querySelector('.dl').innerHTML = icon(on ? 'play' : 'download');
+      c.classList.remove('busy');
+    });
+  }
+  function refreshInstalled() {
+    if (!window.api || !window.api.appStatus) return;
+    window.api.appStatus().then(r => { if (JSON.stringify(r) !== JSON.stringify(installed)) { installed = r || {}; paintNative(); } }).catch(() => {});
+  }
+  function paintBusy(id, stage, pct) {
+    document.querySelectorAll(`[data-id="${id}"]`).forEach(el => {
+      if (el.classList.contains('app')) {
+        el.classList.add('busy');
+        const dl = el.querySelector('.dl'), bar = el.querySelector('.pgb');
+        el.querySelector('small').textContent = STAGE[stage] || '';
+        dl.innerHTML = stage === 'download' && pct >= 0 ? `<span class="pct">${pct}%</span>` : icon('download');
+        bar.classList.toggle('ind', !(stage === 'download' && pct >= 0));
+        bar.style.setProperty('--p', (stage === 'download' && pct >= 0 ? pct : 0) + '%');
+      } else if (el.classList.contains('tile')) {
+        el.lastElementChild.textContent = stage === 'download' && pct >= 0 ? `${pct}%` : (STAGE[stage] || el.dataset.name);
+      }
+    });
+  }
+  function unpaintBusy(id) {
+    document.querySelectorAll(`.tile[data-id="${id}"]`).forEach(t => { t.lastElementChild.textContent = t.dataset.name; });
+    paintNative();
+  }
+  if (window.api && window.api.onAppProgress) window.api.onAppProgress(d => { if (busy.has(d.id)) paintBusy(d.id, d.stage, d.pct); });
+  async function openNative(a, el) {
+    if (!window.api || !window.api.appOpen) { openSite(a.url, el); return; }          // не в установленном приложении: страница загрузки
+    if (busy.has(a.id)) { toast(`${a.name}: подождите, идёт установка`); return; }
+    busy.add(a.id); paintBusy(a.id, installed[a.id] ? 'launch' : 'download', 0);
+    toast(installed[a.id] ? `Запускаю ${a.name}…` : `Скачиваю ${a.name}…`);
+    let r; try { r = await window.api.appOpen(a.id); } catch { r = { ok:false, err:'fail' }; }
+    busy.delete(a.id);
+    if (r && r.installed !== undefined) installed[a.id] = r.installed; else if (r && r.ok) installed[a.id] = true;
+    unpaintBusy(a.id);
+    if (r && r.ok) toast(`${a.name} запущен`);
+    else if (r && r.err === 'cancel') toast(`Установка ${a.name} отменена`);
+    else if (r && r.err === 'busy') toast(`${a.name}: установка уже идёт`);
+    else { toast(`Не удалось установить ${a.name}. Открываю официальную страницу`); openSite(a.url, el); }
+  }
+  renderChips(); renderCatalog();
+  $('#cSearch').addEventListener('input', renderCatalog);
+
+  /* ---------- Навигация между разделами ---------- */
+  function show(id) {
+    closeOSK(false);
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.body.dataset.dir = id === 'home' ? 'back' : 'fwd';
+    $('#' + id).classList.add('active');
+    if (id === 'home') renderLibrary();
+    if (id === 'catalog') renderCatalog();
+    if (id === 'settings') renderSettings();
+    setTimeout(() => focusDefault(id), 60);
+  }
+  function focusDefault(id) {
+    let el = null;
+    if (id === 'home') el = $('#apps .tile');
+    else if (id === 'catalog') el = $('#catalog .cchip.on') || $('#catalog .app');
+    else if (id === 'settings') el = $('#smenu .smenu.on') || $('#smenu .smenu');
+    else if (id === 'browser') { const t = activeTab(); if (t) { try { t.wv.focus(); } catch {} return; } el = $('#sInput'); }
+    if (el) el.focus();
+  }
+
+  /* ---------- Вкладки браузера ---------- */
+  let tabs = [], activeId = null, lastId = null, nextId = 1;
+  const wvBox = $('#webviews'), urlInput = $('#url'), bstart = $('#bstart');
+  const activeTab = () => tabs.find(t => t.id === activeId);
+
+  const GUEST_JS = `(function(){
+    if (window.__tvk) return; window.__tvk = 1;
+    var bad = /^(button|submit|checkbox|radio|range|color|file|image|reset|hidden)$/i;
+    function isText(el){ return el && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !bad.test(el.type || 'text'))); }
+    document.addEventListener('focusin', function(e){
+      var el = e.target; if (!isText(el)) return;
+      console.log('__TVK__' + JSON.stringify({ type: el.type || 'text', value: (el.value !== undefined ? el.value : el.textContent) || '' }));
+    }, true);
+    setInterval(function(){
+      var v = document.querySelector('video');
+      if (!v || !v.duration || !isFinite(v.duration) || v.currentTime < 15) return;
+      var og = document.querySelector('meta[property="og:image"]');
+      console.log('__TVV__' + JSON.stringify({ url: location.href, title: document.title, t: v.currentTime, d: v.duration, img: og ? og.content : '' }));
+    }, 5000);
+  })();`;
+
+  function applyMute() { tabs.forEach(t => { try { t.wv.setAudioMuted(S.bgAudio ? false : t.id !== activeId); } catch {} }); }
+  const zoomTab = t => { try { t.wv.setZoomFactor(S.pageZoom); } catch {} };
+
+  /* ---------- Анимации запуска / закрытия: раскрытие из плитки, круг, затухание ---------- */
+  const morph = $('#morph'), wait = ms => new Promise(r => setTimeout(r, ms));
+  let launchCtx = null, morphAnim = null;
+  const morphBg = c => `linear-gradient(135deg, color-mix(in srgb, ${c} 82%, #0a0e1c), color-mix(in srgb, ${c} 40%, #0a0e1c))`;
+  function ctxFrom(el) {
+    if (!el || !el.getBoundingClientRect) return null;
+    const r = el.getBoundingClientRect(), ic = el.querySelector('.ic');
+    return { r:{ l:r.left, t:r.top, w:r.width, h:r.height }, c:getComputedStyle(el).getPropertyValue('--c').trim() || '#3b4668', ico:ic ? ic.innerHTML : '' };
+  }
+  function morphEnd(a) { if (morphAnim === a) { morph.style.display = 'none'; morphAnim = null; } try { a.cancel(); } catch {} }
+  const reachOf = (cx, cy, W, H) => Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy));
+  function playOpen(ctx, ready) {
+    if (morphAnim) { try { morphAnim.cancel(); } catch {} }
+    const W = innerWidth, H = innerHeight, r = ctx.r, cx = r.l + r.w / 2, cy = r.t + r.h / 2, mode = S.launchAnim;
+    morph.style.cssText = `display:flex;left:0;top:0;width:${W}px;height:${H}px;opacity:1;background:${morphBg(ctx.c)};` + (mode === 'iris' ? 'box-shadow:none;' : '');
+    morph.innerHTML = `<div class="mi"><span class="ic">${ctx.ico}</span></div>`;
+    let a;
+    if (mode === 'iris') a = morph.animate([{ clipPath:`circle(${Math.max(20, r.h / 2)}px at ${cx}px ${cy}px)` }, { clipPath:`circle(${reachOf(cx, cy, W, H)}px at ${cx}px ${cy}px)` }],
+      { duration:680, easing:'cubic-bezier(.3,.7,.2,1)', fill:'both' });
+    else if (mode === 'fade') a = morph.animate([{ opacity:0, transform:'scale(.94)' }, { opacity:1, transform:'scale(1)' }], { duration:340, easing:'ease-out', fill:'both' });
+    else a = morph.animate([
+      { left:r.l + 'px', top:r.t + 'px', width:r.w + 'px', height:r.h + 'px', borderRadius:'26px' },
+      { left:'0px', top:'0px', width:W + 'px', height:H + 'px', borderRadius:'0px' }
+    ], { duration:540, easing:'cubic-bezier(.2,.8,.2,1)', fill:'both' });
+    morphAnim = a;
+    Promise.all([a.finished.catch(() => {}), wait(680), Promise.race([ready || Promise.resolve(), wait(3200)])]).then(() => {
+      if (morphAnim !== a) return;
+      const f = morph.animate([{ opacity:1, transform:'scale(1)' }, { opacity:0, transform:'scale(1.05)' }], { duration:360, easing:'ease-out', fill:'both' });
+      f.finished.then(() => { try { f.cancel(); } catch {} morphEnd(a); }).catch(() => {});
+    });
+  }
+  function playClose(info) {
+    if (!S.anim || !info) return;
+    if (morphAnim) { try { morphAnim.cancel(); } catch {} }
+    const W = innerWidth, H = innerHeight, mode = S.launchAnim;
+    const q = s => document.querySelector(`#apps .tile[${s}]`);
+    const tile = !info.demo && ((info.key && q(`data-key="${CSS.escape(info.key)}"`)) || (info.domain && q(`data-domain="${CSS.escape(info.domain)}"`)));
+    const d = info.demo;
+    const tr = d ? { left:d.r.l, top:d.r.t, width:d.r.w, height:d.r.h } : tile ? tile.getBoundingClientRect() : { left:W / 2 - 120, top:H / 2 - 50, width:240, height:100 };
+    const c = d ? d.c : tile ? (getComputedStyle(tile).getPropertyValue('--c').trim() || '#3b4668') : '#3b4668';
+    const ico = d ? d.ico : tile ? tile.querySelector('.ic').innerHTML : `<img src="${fav(info.domain || '')}" alt="">`;
+    const tcx = tr.left + tr.width / 2, tcy = tr.top + tr.height / 2;
+    morph.style.cssText = `display:flex;left:0;top:0;width:${W}px;height:${H}px;opacity:1;background:${info.thumb ? `#000 url("${info.thumb}") center top/cover no-repeat` : morphBg(c)};` + (mode === 'iris' ? 'box-shadow:none;' : '');
+    morph.innerHTML = info.thumb ? '' : `<div class="mi"><span class="ic">${ico}</span></div>`;
+    let a;
+    if (mode === 'iris') a = morph.animate([{ clipPath:`circle(${reachOf(tcx, tcy, W, H)}px at ${tcx}px ${tcy}px)` }, { clipPath:`circle(0px at ${tcx}px ${tcy}px)` }],
+      { duration:560, easing:'cubic-bezier(.55,0,.25,1)', fill:'both' });
+    else if (mode === 'fade') a = morph.animate([{ opacity:1, transform:'scale(1)' }, { opacity:0, transform:'scale(.94)' }], { duration:380, easing:'ease-in', fill:'both' });
+    else a = morph.animate([
+      { left:'0px', top:'0px', width:W + 'px', height:H + 'px', borderRadius:'0px', opacity:1 },
+      { offset:.7, opacity:1 },
+      { left:tr.left + 'px', top:tr.top + 'px', width:tr.width + 'px', height:tr.height + 'px', borderRadius:'26px', opacity:0 }
+    ], { duration:520, easing:'cubic-bezier(.5,0,.2,1)', fill:'both' });
+    morphAnim = a; a.finished.then(() => morphEnd(a)).catch(() => {});
+  }
+  const tabInfo = t => t ? { key:t.startUrl, domain:domainOf(t.startUrl), thumb:t.thumb } : { key:'tv:chromium', domain:'chromium.org', thumb:null };
+  let demoBusy = false;
+  async function playDemo() {
+    if (demoBusy || !S.anim) { if (!S.anim) toast('Включите анимации, чтобы посмотреть'); return; }
+    demoBusy = true;
+    const W = innerWidth, H = innerHeight, ctx = { r:{ l:W / 2 - 130, t:H / 2 - 50, w:260, h:100 }, c:S.accent, ico:'<i class="cr" style="font-size:56px"></i>' };
+    playOpen(ctx, wait(500)); await wait(1700);
+    playClose({ demo:ctx }); await wait(1000);
+    const v = $('#veil'); v.className = 'shut'; await wait(1700);
+    v.className = 'boot'; await wait(3000); v.className = 'done'; demoBusy = false;
+  }
+
+  function newTab(url) {
+    if (DROID) { launchCtx = null; try { DROID.openUrl(url); } catch {} return null; }     // Android: сайт откроется в родном приложении или в окне браузера
+    const wv = document.createElement('webview');
+    wv.setAttribute('partition', 'persist:tv');
+    wv.setAttribute('src', url);
+    const t = { id: nextId++, wv, startUrl: url, url, title: '', domain: domainOf(url), thumb: null };
+    t.ready = new Promise(r => { t._ready = r; });
+    wv.addEventListener('did-stop-loading', () => t._ready());
+    wv.addEventListener('page-title-updated', e => { t.title = e.title; setHistoryTitle(t.url, e.title); renderPanel(); });
+    const nav = e => { t.url = e.url; t.domain = domainOf(e.url) || t.domain; addHistory(e.url, t.title); if (t.id === activeId) urlInput.value = e.url; renderPanel(); };
+    wv.addEventListener('did-navigate', nav);
+    wv.addEventListener('did-navigate-in-page', nav);
+    wv.addEventListener('dom-ready', () => { applyMute(); zoomTab(t); try { wv.executeJavaScript(GUEST_JS); } catch {} });
+    wv.addEventListener('console-message', e => {
+      const m = e.message || '';
+      try {
+        if (m.startsWith('__TVK__')) onField(t, JSON.parse(m.slice(7)));
+        else if (m.startsWith('__TVV__')) onVideo(JSON.parse(m.slice(7)));
+      } catch {}
+    });
+    wvBox.appendChild(wv);
+    tabs.push(t);
+    activate(t.id);
+    return t;
+  }
+  async function snapshot(t) {
+    try { const img = await t.wv.capturePage(); const s = img.resize ? img.resize({ width: 340 }) : img; t.thumb = s.toDataURL(); } catch {}
+  }
+  async function activate(id) {
+    const prev = activeTab();
+    if (prev && prev.id !== id) await snapshot(prev);
+    const ctx = launchCtx; launchCtx = null;
+    activeId = lastId = id;
+    bstart.classList.add('hide');
+    tabs.forEach(t => t.wv.classList.toggle('on', t.id === id));
+    const t = activeTab(); urlInput.value = t ? t.url : '';
+    applyMute(); closePanel(); renderPanel();
+    if (ctx && S.anim && !$('#browser').classList.contains('active')) { playOpen(ctx, t && t.ready); setTimeout(() => show('browser'), 170); }
+    else show('browser');
+  }
+  async function minimize() {
+    const t = activeTab(); if (t) await snapshot(t);
+    const info = tabInfo(t);
+    activeId = null; applyMute(); renderPanel(); show('home'); playClose(info);
+  }
+  async function openBrowser(src) {                     // стартовая страница браузера (а не последняя вкладка)
+    const t = activeTab(); if (t) await snapshot(t);
+    const ctx = src && src.getBoundingClientRect && !$('#browser').classList.contains('active') ? ctxFrom(src) : null;
+    activeId = null; tabs.forEach(x => x.wv.classList.remove('on')); applyMute();
+    bstart.classList.remove('hide'); urlInput.value = ''; $('#sInput').value = '';
+    renderStart(); renderPanel(); closePanel();
+    if (ctx && S.anim) { playOpen(ctx, null); setTimeout(() => show('browser'), 170); } else show('browser');
+  }
+  async function closeTab(id) {
+    let i = tabs.findIndex(t => t.id === id); if (i < 0) return;
+    if (activeId === id) await snapshot(tabs[i]);
+    i = tabs.findIndex(t => t.id === id); if (i < 0) return;
+    const info = tabInfo(tabs[i]);
+    tabs[i].wv.remove(); tabs.splice(i, 1);
+    if (lastId === id) lastId = tabs.length ? tabs[tabs.length - 1].id : null;
+    if (activeId === id) { activeId = null; renderPanel(); closePanel(); show('home'); playClose(info); } else renderPanel();
+  }
+  function closeAll() { [...tabs].forEach(t => closeTab(t.id)); closePanel(); }
+  function openSite(url, src) {
+    const ex = tabs.find(t => t.startUrl === url || t.url === url);
+    launchCtx = src ? ctxFrom(src) : null;
+    ex ? activate(ex.id) : newTab(url);
+  }
+  function act(m) { const t = activeTab(); if (t) try { t.wv[m](); } catch {} }
+
+  function go(v) {
+    v = v.trim(); if (!v) return null;
+    if (/^https?:\/\//.test(v)) return v;
+    if (v.includes('.') && !v.includes(' ')) return 'https://' + v;
+    return ENGINES[S.search][1] + encodeURIComponent(v);
+  }
+  urlInput.addEventListener('keydown', e => { if (e.key !== 'Enter') return; const v = go(urlInput.value); if (!v) return; closeOSK(false); const t = activeTab(); t ? t.wv.loadURL(v) : newTab(v); });
+  $('#sInput').addEventListener('keydown', e => { if (e.key !== 'Enter') return; const v = go(e.target.value); if (v) { closeOSK(false); newTab(v); } });
+
+  function renderStart() {
+    const g = $('#bgrid'); g.innerHTML = '';
+    const items = homeApps.filter(a => !a.special).map(a => ({ name:a.name, domain:a.domain, url:a.url }));
+    history.slice(0, 8).forEach(h => { if (!items.some(i => i.domain === h.domain)) items.push({ name:h.title || h.domain, domain:h.domain, url:h.url }); });
+    items.slice(0, 12).forEach((a, i) => {
+      const c = appCard(a, i, a.domain);
+      c.onclick = () => newTab(a.url); g.appendChild(c);
+    });
+  }
+
+  if (window.api) {
+    window.api.onOpenUrl(url => newTab(url));
+    window.api.onGuestKey(k => {                        // Назад / Esc из сайта
+      if (osk.open) { closeOSK(true); return; }
+      const t = activeTab();
+      if (k === 'BrowserBack' && t) { let can = false; try { can = t.wv.canGoBack(); } catch {} if (can) { t.wv.goBack(); return; } }
+      const first = $('#browser .bar .ico'); if (first) first.focus();
+    });
+  }
+
+  /* ---------- Панель вкладок ---------- */
+  const panel = $('#panel'), list = $('#list');
+  function renderPanel() {
+    ['badge', 'badge2'].forEach(id => { const b = $('#' + id); b.textContent = tabs.length; b.classList.toggle('on', tabs.length > 0); });
+    list.innerHTML = '';
+    if (!tabs.length) { list.innerHTML = '<div class="empty">Нет открытых вкладок</div>'; return; }
+    [...tabs].reverse().forEach(t => {
+      const c = mk('div', 'card' + (t.id === activeId ? ' cur' : ''));
+      c.tabIndex = 0; c.dataset.id = t.id;
+      c.innerHTML = `<div class="thumb">${t.thumb ? '' : `<img src="${fav(t.domain)}" alt="">`}</div>
+        <div class="meta"><img src="${fav(t.domain)}" alt=""><div class="t"><b></b><small></small></div><span class="x" tabindex="0">${icon('x')}</span></div>`;
+      if (t.thumb) c.querySelector('.thumb').style.backgroundImage = `url(${t.thumb})`;
+      c.querySelector('b').textContent = t.title || t.domain || 'Новая вкладка';
+      c.querySelector('small').textContent = t.domain;
+      c.onclick = () => activate(t.id);
+      c.querySelector('.x').onclick = e => { e.stopPropagation(); closeTab(t.id); };
+      list.appendChild(c);
+    });
+  }
+  function openPanel()  { panel.classList.add('open'); $('#backdrop').classList.add('on'); setTimeout(() => (list.querySelector('.card') || panel.querySelector('.p-clear')).focus(), 60); }
+  function closePanel() { panel.classList.remove('open'); $('#backdrop').classList.remove('on'); }
+  renderPanel();
+
+  /* ---------- Часы ---------- */
+  const pad = n => String(n).padStart(2, '0');
+  const cp = $('#clockPop');
+  const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+  function greeting(h) { return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'; }
+  const fmtHM = d => { let h = d.getHours(); if (!S.clock24) h = h % 12 || 12; return `${S.clock24 ? pad(h) : h}:${pad(d.getMinutes())}`; };
+  const ampm = d => S.clock24 ? '' : (d.getHours() < 12 ? 'AM' : 'PM');
+  function tick() {
+    const d = new Date(), hm = fmtHM(d);
+    $('#clock').textContent = hm + (S.clock24 ? '' : ' ' + ampm(d));
+    $('#cwHM').textContent = hm;
+    $('#cwS').textContent = [ampm(d), S.seconds ? pad(d.getSeconds()) : ''].filter(Boolean).join(' ');
+    const dt = cap(d.toLocaleDateString('ru-RU', { weekday:'long', day:'numeric', month:'long' }));
+    $('#cwDate').textContent = dt;
+    if (cp.classList.contains('on')) { $('#cpHM').textContent = hm; $('#cpS').textContent = `:${pad(d.getSeconds())}`; }
+    if (sleeping) { $('#slT').textContent = hm; $('#slD').textContent = dt; }
+  }
+  let sleeping = false, sleepAt = 0, sleepFocus = null;
+  tick(); setInterval(tick, 1000);
+  let factDay = '', factHtml = '';
+  async function loadFact(d) {
+    const mm = pad(d.getMonth() + 1), dd = pad(d.getDate());
+    for (const lang of ['ru', 'en']) {
+      try {
+        const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/feed/onthisday/events/${mm}/${dd}`);
+        if (!r.ok) continue;
+        const ev = (await r.json()).events;
+        if (ev && ev.length) { const e = ev[Math.floor(Math.random() * ev.length)]; return `<b>${esc(e.year)}</b><br>${esc(e.text)}`; }
+      } catch {}
+    }
+    return null;
+  }
+  async function openClock() {
+    const d = new Date(), y = d.getFullYear();
+    const doy = Math.floor((new Date(y, d.getMonth(), d.getDate()) - new Date(y, 0, 0)) / 864e5);
+    const left = Math.round((new Date(y + 1, 0, 1) - new Date(y, d.getMonth(), d.getDate())) / 864e5);
+    const date = d.toLocaleDateString('ru-RU', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+    $('#cpDate').textContent = date.charAt(0).toUpperCase() + date.slice(1);
+    $('#cpChips').innerHTML = `<i>${doy}-й день года</i><i>до Нового года: ${left} дн.</i>`;
+    cp.classList.add('on'); tick(); cp.querySelector('.pclose').focus();
+    const key = `${d.getMonth()}-${d.getDate()}`;
+    if (factDay !== key) {
+      $('#cpFact').textContent = 'Загрузка…';
+      const f = await loadFact(d);
+      factHtml = f || 'Нет подключения к интернету, факт дня недоступен.';
+      factDay = f ? key : '';
+    }
+    $('#cpFact').innerHTML = factHtml;
+  }
+  function closeClock() { cp.classList.remove('on'); $('#clock').focus(); }
+
+  /* ---------- Добавление сайта ---------- */
+  const addPop = $('#addPop');
+  function openAdd() { addPop.classList.add('on'); $('#addUrl').value = ''; setTimeout(() => $('#addUrl').focus(), 80); }
+  function closeAdd() { addPop.classList.remove('on'); closeOSK(false); const t = $('#apps .tile:last-child'); if (t) t.focus(); }
+  $('#addOk').onclick = () => {
+    if (addCustom($('#addUrl').value)) closeAdd();
+  };
+  function addCustom(raw, name) {                      // закрепить сайт плиткой на главной
+    let v = String(raw).trim(); if (!v) return false;
+    if (!/^https?:\/\//.test(v)) v = 'https://' + v;
+    const dom = domainOf(v); if (!dom) return false;
+    if (homeApps.some(c => c.url === v)) return true;
+    let h = 0; for (const ch of dom) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const nm = name || dom.split('.')[0].replace(/^./, c => c.toUpperCase());
+    homeApps.push({ name: nm, domain: dom, url: v, color: PALETTE[h % PALETTE.length] });
+    saveHome(); renderApps(); return true;
+  }
+  $('#addUrl').addEventListener('keydown', e => { if (e.key === 'Enter') $('#addOk').click(); });
+
+  /* ---------- Экранная клавиатура ---------- */
+  const oskEl = $('#osk'), oskKeys = $('#oskKeys');
+  const osk = { open:false, target:null, buf:'', lang:'ru', shift:false, secret:false };
+  const LAYOUT = {
+    ru:['1234567890', 'йцукенгшщзхъ', 'фывапролджэ', 'ячсмитьбю'],
+    en:['1234567890', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm'],
+    sym:['!@#$%^&*()', '-_=+[]{};:', '\'"/\\|<>?~`', ',.;:№§…']
+  };
+  function oskKey(label, fn, cls, act) {
+    const k = mk('div', 'key' + (cls ? ' ' + cls : ''), label); k.tabIndex = 0;
+    if (act) k.dataset.act = act;
+    k.onclick = fn; k.addEventListener('mousedown', e => e.preventDefault()); return k;
+  }
+  function buildOSK(focusAct) {
+    oskKeys.innerHTML = '';
+    LAYOUT[osk.lang].forEach((r, ri) => {
+      const row = mk('div', 'krow');
+      [...r].forEach(ch => { const k = oskKey('', () => typeCh(ch)); k.dataset.ch = ch; row.appendChild(k); });
+      if (ri === 3) row.appendChild(oskKey(icon('bs'), backspace, 'wide', 'bs'));
+      oskKeys.appendChild(row);
+    });
+    const b = mk('div', 'krow');
+    b.appendChild(oskKey(icon('shift'), () => { osk.shift = !osk.shift; updateCase(); }, 'act', 'shift'));
+    b.appendChild(oskKey(osk.lang === 'ru' ? 'EN' : 'RU', () => { osk.lang = osk.lang === 'ru' ? 'en' : 'ru'; buildOSK('lang'); }, 'act', 'lang'));
+    b.appendChild(oskKey(osk.lang === 'sym' ? 'abc' : '123', () => { osk.lang = osk.lang === 'sym' ? 'ru' : 'sym'; buildOSK('sym'); }, 'act', 'sym'));
+    b.appendChild(oskKey('', () => typeStr(' '), 'space', 'space'));
+    b.appendChild(oskKey('.', () => typeStr('.'), 'act'));
+    b.appendChild(oskKey('.com', () => typeStr('.com'), 'act'));
+    b.appendChild(oskKey('@', () => typeStr('@'), 'act'));
+    b.appendChild(oskKey('/', () => typeStr('/'), 'act'));
+    b.appendChild(oskKey(icon('enter') + '&nbsp;Ввод', oskEnter, 'wide go', 'enter'));
+    b.appendChild(oskKey(icon('down'), () => closeOSK(true), 'act', 'hide'));
+    oskKeys.appendChild(b);
+    updateCase();
+    if (focusAct) { const t = oskKeys.querySelector(`[data-act="${focusAct}"]`); if (t) t.focus(); }
+  }
+  function updateCase() {
+    oskKeys.querySelectorAll('[data-ch]').forEach(k => { k.textContent = osk.shift && osk.lang !== 'sym' ? k.dataset.ch.toUpperCase() : k.dataset.ch; });
+    const sh = oskKeys.querySelector('[data-act="shift"]'); if (sh) sh.classList.toggle('on', osk.shift);
+  }
+  function renderPrev() { $('#oskPrev').textContent = osk.secret ? '•'.repeat(osk.buf.length) : osk.buf; }
+  function openOSK(target, o) {
+    if (S.osk === 'off' || osk.mute) return;
+    o = o || {};
+    if (osk.open && osk.target && osk.target.el === target.el && osk.target.wv === target.wv) return;
+    osk.target = target; osk.secret = !!o.secret;
+    osk.buf = target.el ? target.el.value : (o.value || '');
+    if (o.latin) osk.lang = 'en'; else if (osk.lang === 'sym') osk.lang = 'ru';
+    osk.shift = false; osk.open = true;
+    buildOSK(); renderPrev(); oskEl.classList.add('open');
+  }
+  function closeOSK(refocus) {
+    if (!osk.open) return;
+    osk.open = false; oskEl.classList.remove('open');
+    const t = osk.target; osk.target = null;
+    if (refocus && t) { osk.mute = true; try { (t.el || t.wv).focus(); } catch {} setTimeout(() => { osk.mute = false; }, 100); }
+  }
+  function typeStr(s) {
+    const t = osk.target; if (!t) return;
+    if (t.el) { t.el.value += s; osk.buf = t.el.value; t.el.dispatchEvent(new Event('input', { bubbles:true })); }
+    else { osk.buf += s; try { t.wv.insertText(s); } catch {} }
+    renderPrev();
+  }
+  function typeCh(ch) { typeStr(osk.shift && osk.lang !== 'sym' ? ch.toUpperCase() : ch); if (osk.shift) { osk.shift = false; updateCase(); } }
+  function backspace() {
+    const t = osk.target; if (!t) return;
+    if (t.el) { t.el.value = t.el.value.slice(0, -1); osk.buf = t.el.value; t.el.dispatchEvent(new Event('input', { bubbles:true })); }
+    else { osk.buf = osk.buf.slice(0, -1); try { t.wv.sendInputEvent({ type:'keyDown', keyCode:'Backspace' }); t.wv.sendInputEvent({ type:'keyUp', keyCode:'Backspace' }); } catch {} }
+    renderPrev();
+  }
+  function oskEnter() {
+    const t = osk.target; if (!t) return;
+    if (t.el) { t.el.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter', bubbles:true })); }
+    else { try { t.wv.sendInputEvent({ type:'keyDown', keyCode:'Enter' }); t.wv.sendInputEvent({ type:'char', keyCode:'\r' }); t.wv.sendInputEvent({ type:'keyUp', keyCode:'Enter' }); } catch {} closeOSK(true); }
+  }
+  function bindOSK(input, latin) {                      // клавиатура для наших полей ввода
+    input.addEventListener('focus', () => openOSK({ el:input }, { latin }));
+    input.addEventListener('focusout', () => setTimeout(() => {
+      const a = document.activeElement;
+      if (a === input || (a && a.closest && a.closest('#osk'))) return;
+      if (osk.open && osk.target && osk.target.el === input) closeOSK(false);
+    }, 0));
+  }
+  bindOSK($('#url'), true); bindOSK($('#sInput'), false); bindOSK($('#addUrl'), true); bindOSK($('#cSearch'), false);
+  function onField(t, info) {                           // поле ввода на сайте получило фокус
+    if (t.id !== activeId || S.osk === 'off') return;
+    openOSK({ wv:t.wv }, { value:info.value, secret:info.type === 'password', latin:['email', 'url', 'password'].includes(info.type) });
+    setTimeout(() => { const k = oskKeys.querySelector('[data-ch]'); if (k) k.focus(); }, 80);
+  }
+
+  /* ---------- Диалоги (пароль, подтверждения, выбор) ---------- */
+  Object.assign(ICONS, {
+    lock:'<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    sound:'<path d="M4 10v4h4l5 4V6L8 10z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a8 8 0 0 1 0 11"/>',
+    bolt:'<path d="M13 3L5 13h6l-1 8 8-10h-6z"/>',
+    time:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    bt:'<path d="M7 7l10 10-5 4V3l5 4L7 17"/>',
+    storage:'<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+    apps:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>',
+    pc:'<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+    trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    speed:'<path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-6"/>',
+    cable:'<rect x="6" y="3" width="12" height="8" rx="2"/><path d="M9 11v4h6v-4M12 15v6"/>',
+    pin:'<path d="M12 21s7-6.2 7-11a7 7 0 0 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>'
+  });
+  const dlg = $('#dlg'), dlgIn = $('#dlgIn');
+  let dlgState = null, keyTest = null;
+  function dialog(o) {
+    dlgState = { ...o, from: document.activeElement };
+    $('#dlgT').textContent = o.title || '';
+    const m = $('#dlgM'); m.textContent = o.msg || ''; m.style.display = o.msg ? '' : 'none';
+    const inp = o.input, eye = $('#dlgEye');
+    $('#dlgRow').style.display = inp ? '' : 'none'; dlgIn.type = inp && inp.secret ? 'password' : 'text';
+    dlgIn.value = (inp && inp.value) || ''; dlgIn.placeholder = (inp && inp.ph) || '';
+    eye.style.display = inp && inp.secret ? '' : 'none'; eye.textContent = 'Показать';
+    const bx = $('#dlgB'); bx.innerHTML = '';
+    (o.buttons || []).forEach(b => {
+      const c = mk('span', 'chip' + (b.primary ? ' on' : '') + (b.danger ? ' danger' : ''), esc(b.t)); c.tabIndex = 0;
+      c.onclick = () => { const v = dlgIn.value; closeDialog(true); if (b.fn) b.fn(v); };
+      if (b.primary) dlgState.ok = c;
+      bx.appendChild(c);
+    });
+    dlg.classList.toggle('top', !!inp); dlg.classList.add('on');
+    setTimeout(() => (inp ? dlgIn : (dlgState && (dlgState.ok || bx.firstChild))).focus(), 90);
+  }
+  function closeDialog(refocus = true) {
+    const s = dlgState; dlgState = null; keyTest = null; dlg.classList.remove('on'); closeOSK(false); dlgIn.blur();
+    if (refocus && s && s.from && document.contains(s.from)) { try { s.from.focus(); } catch {} }
+  }
+  $('#dlgEye').onclick = () => {
+    const show = dlgIn.type === 'password'; dlgIn.type = show ? 'text' : 'password'; osk.secret = !show; renderPrev();
+    $('#dlgEye').textContent = show ? 'Скрыть' : 'Показать';
+  };
+  dlgIn.addEventListener('focus', () => openOSK({ el:dlgIn }, { latin:!(dlgState && dlgState.input && dlgState.input.numeric), secret:dlgIn.type === 'password' }));
+  dlgIn.addEventListener('focusout', () => setTimeout(() => {
+    const a = document.activeElement;
+    if (a === dlgIn || (a && a.closest && a.closest('#osk'))) return;
+    if (osk.open && osk.target && osk.target.el === dlgIn) closeOSK(false);
+  }, 0));
+  dlgIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (dlgState && dlgState.ok) dlgState.ok.click(); } });
+  // проверка кнопок пульта: показывает, какую клавишу отправляет устройство
+  addEventListener('keydown', e => {
+    if (!keyTest) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    const now = Date.now();
+    if (e.key === 'Escape' && now - keyTest.last < 900) { closeDialog(); return; }
+    keyTest.last = e.key === 'Escape' ? now : 0;
+    $('#dlgM').innerHTML = `<span class="kt">${esc(e.key === ' ' ? 'Пробел' : e.key)}</span><br><small>код: ${esc(e.code || '—')}</small>`;
+    $('#dlgM').style.display = '';
+  }, true);
+  const askPin = (title, cb) => dialog({ title, input:{ secret:true, numeric:true, ph:'PIN-код' }, buttons:[{ t:'OK', primary:true, fn:cb }, { t:'Отмена' }] });
+  function openSettings(id) {
+    if (id) sec = id;
+    if (!S.pin) { show('settings'); return; }
+    askPin('Введите PIN-код', v => { if (v === S.pin) show('settings'); else toast('Неверный PIN-код'); });
+  }
+
+  /* ---------- Настройки (экран) ---------- */
+  const SECTIONS = [
+    { id:'net',  name:'Сеть и интернет', ico:'wifi' },
+    { id:'bt',   name:'Пульты и Bluetooth', ico:'bt' },
+    { id:'img',  name:'Экран и изображение', ico:'image' },
+    { id:'wall', name:'Обои и часы', ico:'mount' },
+    { id:'snd',  name:'Звук', ico:'sound' },
+    { id:'home', name:'Главный экран', ico:'apps' },
+    { id:'pwr',  name:'Питание и сон', ico:'bolt' },
+    { id:'web',  name:'Браузер', ico:'globe' },
+    { id:'sys',  name:'Система и ввод', ico:'time' },
+    { id:'about', name:'О телевизоре', ico:'info' }
+  ];
+  let sec = 'net';
+  function renderSettings() {
+    const m = $('#smenu'); m.innerHTML = '';
+    SECTIONS.forEach((s, i) => {
+      const e = mk('div', 'smenu' + (s.id === sec ? ' on' : ''), `${icon(s.ico)}<span>${s.name}</span>`);
+      e.tabIndex = 0; e.style.setProperty('--i', i);
+      const pick = () => { if (sec === s.id && $('#spane').dataset.s === s.id) return; sec = s.id; m.querySelectorAll('.smenu').forEach(x => x.classList.toggle('on', x === e)); renderPane(); };
+      e.onfocus = pick; e.onclick = pick; m.appendChild(e);
+    });
+    renderPane();
+  }
+  const val = txt => mk('span', 'v', esc(txt));
+  const gb = b => b >= 1e12 ? (b / 1e12).toFixed(1) + ' ТБ' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' ГБ' : Math.max(1, Math.round(b / 1e6)) + ' МБ';
+  const sigLvl = s => s >= 70 ? 3 : s >= 40 ? 2 : 1;
+  const sigIcon = l => `<svg class="i" viewBox="0 0 24 24"><path style="opacity:${l >= 3 ? 1 : .22}" d="M2 9a14.5 14.5 0 0 1 20 0"/><path style="opacity:${l >= 2 ? 1 : .22}" d="M5 12.5a10 10 0 0 1 14 0"/><path style="opacity:${l >= 1 ? 1 : .22}" d="M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1" fill="currentColor"/></svg>`;
+  const OFF_OPTS = [['Выкл', 0], ['Через 30 минут', 30], ['Через 1 час', 60], ['Через 90 минут', 90], ['Через 2 часа', 120]];
+  const sysOpen = k => () => window.api ? window.api.openSystem(k) : DROID && DROID.openSystem(k);
+  const need = () => { toast('Эта функция работает только в установленном приложении'); };
+  const confirmPc = (title, msg, what, ok) => dialog({ title, msg, buttons:[{ t:'Отмена', primary:true }, { t:ok, danger:true, fn:() => window.api ? window.api.pcPower(what) : need() }] });
+  async function speedTest(b) {
+    b.textContent = 'Измерение…'; let bytes = 0; const t0 = performance.now();
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 7000);
+    const mbit = () => (bytes * 8 / ((performance.now() - t0) / 1000) / 1e6);
+    try {
+      const r = await fetch('https://speed.cloudflare.com/__down?bytes=40000000', { cache:'no-store', signal:ctl.signal }), rd = r.body.getReader();
+      for (;;) { const { done, value } = await rd.read(); if (done) break; bytes += value.length; if (performance.now() - t0 > 400) b.textContent = mbit().toFixed(0) + ' Мбит/с…'; }
+    } catch {}
+    clearTimeout(to);
+    b.textContent = bytes > 2e5 ? `${mbit().toFixed(0)} Мбит/с` : 'Нет связи';
+  }
+  let vTimer = 0;
+  function renderPane(keep) {
+    const p = $('#spane'); p.innerHTML = ''; p.dataset.s = sec; if (!keep) p.scrollTop = 0;
+    const s = SECTIONS.find(x => x.id === sec); p.appendChild(mk('h3', '', s.name));
+    let n = 0, tgt = p;
+    const put = el => { el.style.setProperty('--i', Math.min(n++, 14)); tgt.appendChild(el); return el; };
+    const R = (label, desc, right, cls, ico) => {
+      const r = mk('div', 'srow' + (cls ? ' ' + cls : ''), `${ico ? `<span class="rico">${ico}</span>` : ''}<div class="lb"><b></b>${desc ? '<small></small>' : ''}</div>`);
+      r.querySelector('b').textContent = label; if (desc) r.querySelector('small').textContent = desc;
+      if (right) r.appendChild(right); return put(r);
+    };
+    const info = (label, v, d) => R(label, d || '', v === undefined ? null : val(v), 'info');
+    const grp = t => put(mk('div', 'sgrp', esc(t)));
+    const note = t => put(mk('div', 'snote', esc(t)));
+    const opt = (key, label, desc, opts, after) => {       // несколько значений: Enter и → вперёд, ← назад
+      const stp = mk('div', 'stp', `<i class="ar">${icon('back')}</i><span class="sv"></span><i class="ar">${icon('forward')}</i>`);
+      const r = R(label, desc, stp); r.tabIndex = 0;
+      const find = () => {
+        let i = opts.findIndex(o => o[1] === S[key]);
+        if (i < 0 && typeof S[key] === 'number') { let b = 1e9; opts.forEach((o, k) => { const d = Math.abs(o[1] - S[key]); if (d < b) { b = d; i = k; } }); }
+        return Math.max(0, i);
+      };
+      const upd = () => { const o = opts[find()]; stp.querySelector('.sv').innerHTML = (o[2] ? `<i class="sw" style="background:${o[2]}"></i>` : '') + esc(o[0]); };
+      const adj = d => { S[key] = opts[(find() + d + opts.length) % opts.length][1]; saveS(); applySettings(); upd(); if (after) after(S[key]); };
+      r._adj = adj; r.onclick = () => adj(1);
+      const [l, rr] = stp.querySelectorAll('.ar');
+      l.onclick = e => { e.stopPropagation(); adj(-1); }; rr.onclick = e => { e.stopPropagation(); adj(1); };
+      upd(); return r;
+    };
+    const tog = (key, label, desc, after) => {
+      const sw = mk('div', 'swt' + (S[key] ? ' on' : '')), r = R(label, desc, sw); r.tabIndex = 0;
+      r.onclick = () => { S[key] = !S[key]; saveS(); applySettings(); sw.classList.toggle('on', S[key]); if (after) after(S[key]); };
+      return r;
+    };
+    const act = (label, desc, text, fn, ico) => {
+      const c = mk('span', 'chip', esc(text)), r = R(label, desc, c, '', ico); r.tabIndex = 0;
+      r.onclick = () => fn(c, r); return r;
+    };
+    const slider = (label, desc, get, set, ico) => {          // ползунок 0–100 с шагом 5
+      const bar = mk('div', 'vbar', '<i></i>'), num = mk('span', 'vnum'), st = mk('div', 'stp'); st.append(bar, num);
+      const r = R(label, desc, st, '', ico); r.tabIndex = 0; let cur = 0;
+      const draw = () => { bar.firstChild.style.width = cur + '%'; num.textContent = cur + '%'; };
+      r._set = v => { cur = v; draw(); };
+      r._adj = d => { cur = Math.max(0, Math.min(100, cur + d * 5)); draw(); set(cur); };
+      r.onclick = () => r._adj(1); draw(); return r;
+    };
+    const inBox = (box, fn) => { const o = tgt; tgt = box; try { fn(); } finally { tgt = o; } };
+    const api = window.api;
+
+    if (sec === 'net') {
+      const hero = put(mk('div', 'nhero', `<span class="nh-i">${icon('wifi')}</span><div><b>Проверяем подключение…</b><small></small></div>`));
+      const heroSet = (t, sub, off) => { hero.querySelector('b').textContent = t; hero.querySelector('small').textContent = sub || ''; hero.classList.toggle('off', !!off); };
+      heroSet(navigator.onLine ? 'Подключено к интернету' : 'Нет подключения', '', !navigator.onLine);
+      let curWifi = null;
+      const showHero = ifs => {
+        const ip = ifs && ifs[0] ? `IP-адрес ${ifs[0].ip}` : '';
+        if (!navigator.onLine) heroSet('Нет подключения', ip, true);
+        else if (curWifi) { hero.querySelector('.nh-i').innerHTML = sigIcon(sigLvl(curWifi.signal)); heroSet(`Wi‑Fi: ${curWifi.ssid}`, `${ip}${ip ? ' · ' : ''}сигнал ${curWifi.signal}%`); }
+        else { hero.querySelector('.nh-i').innerHTML = icon('cable'); heroSet('Подключено', ip || 'Проводная или другая сеть'); }
+      };
+      if (api) api.sysInfo().then(i => showHero(i.net)); else showHero(null);
+      act('Проверить интернет', 'Быстрый тест связи и задержки', 'Проверить', async b => {
+        b.textContent = 'Проверяю…'; const t0 = performance.now();
+        try { await fetch('https://www.gstatic.com/generate_204', { mode:'no-cors', cache:'no-store' }); b.textContent = `Есть, ${Math.round(performance.now() - t0)} мс`; }
+        catch { b.textContent = 'Нет доступа'; } }, icon('globe'));
+      act('Скорость интернета', 'Загрузка тестового файла в течение нескольких секунд', 'Измерить', b => speedTest(b), icon('speed'));
+      act('Дополнительные параметры сети', 'Прокси, DNS, IP-адрес — в настройках Windows', 'Открыть', sysOpen('network'), icon('pc'));
+      grp('Беспроводные сети Wi‑Fi');
+      const wbox = put(mk('div', 'slist'));
+      const load = async () => {
+        wbox.innerHTML = '<div class="snote">Поиск сетей…</div>';
+        if (!api) {
+          wbox.innerHTML = '';
+          if (DROID) inBox(wbox, () => act('Сети Wi‑Fi', 'Выбор сети и ввод пароля — в системных настройках', 'Открыть', sysOpen('wifi'), icon('wifi')));
+          else wbox.innerHTML = '<div class="snote">Список сетей доступен в установленном приложении.</div>';
+          return;
+        }
+        const r = await api.wifiScan();
+        if (sec !== 'net' || !wbox.isConnected) return;
+        wbox.innerHTML = '';
+        curWifi = r.cur || null; api.sysInfo().then(i => showHero(i.net));
+        inBox(wbox, () => {
+          if (r.error === 'unsupported') { note('Поиск Wi‑Fi работает только в Windows.'); return; }
+          if (!r.nets || !r.nets.length) {
+            note('Сети не найдены. Проверьте, что Wi‑Fi адаптер включён, а в Windows разрешён доступ к геолокации — без него поиск сетей не работает.');
+            act('Разрешить геолокацию', 'Откроются настройки конфиденциальности Windows', 'Открыть', sysOpen('location'), icon('pin'));
+          } else r.nets.forEach(w => {
+            const right = mk('div', 'ctl');
+            right.innerHTML = `<span class="v">${w.connected ? 'Подключено' : w.saved ? 'Сохранена' : ''}</span>${w.open ? '' : icon('lock')}`;
+            const row = R(w.ssid, w.open ? 'Открытая сеть' : (w.wpa3 ? 'WPA3' : 'Защищённая сеть'), right, w.connected ? 'wnet cur' : 'wnet', sigIcon(sigLvl(w.signal)));
+            row.tabIndex = 0; row.onclick = () => wifiAction(w, load);
+          });
+          act('Обновить список', '', 'Обновить', () => { load().then(() => { const f = wbox.querySelector('.srow[tabindex]'); if (f) f.focus(); }); }, icon('reload'));
+        });
+      };
+      load();
+    } else if (sec === 'bt') {
+      act('Добавить устройство', 'Откроется окно Windows. Сначала переведите устройство в режим сопряжения', 'Добавить', () => api ? api.openSystem('btadd') : DROID ? DROID.openSystem('btadd') : need(), icon('bt'));
+      grp('Сопряжённые устройства');
+      const bbox = put(mk('div', 'slist'));
+      const load = async () => {
+        bbox.innerHTML = '<div class="snote">Загрузка списка…</div>';
+        if (!api) {
+          bbox.innerHTML = '';
+          if (DROID) inBox(bbox, () => act('Bluetooth', 'Список и подключение устройств — в системных настройках', 'Открыть', sysOpen('bluetooth'), icon('bt')));
+          else bbox.innerHTML = '<div class="snote">Список устройств доступен в установленном приложении.</div>';
+          return;
+        }
+        const r = await api.btList();
+        if (sec !== 'bt' || !bbox.isConnected) return;
+        bbox.innerHTML = '';
+        inBox(bbox, () => {
+          if (r.error) note(r.error === 'unsupported' ? 'Работает только в Windows.' : 'Не удалось получить список устройств.');
+          else if (!r.adapter && !r.devices.length) note('Bluetooth-адаптер не найден. Подключите USB-адаптер или включите Bluetooth в Windows.');
+          else if (!r.devices.length) note('Сопряжённых устройств пока нет.');
+          (r.devices || []).forEach(d => {
+            const row = R(d.name, d.on ? 'Подключено' : 'Сопряжено', val(d.on ? '●' : ''), 'bdev' + (d.on ? ' cur' : ''), icon('bt'));
+            row.tabIndex = 0;
+            row.onclick = () => dialog({ title:d.name, msg:'Отключить или удалить устройство можно в настройках Bluetooth Windows.', buttons:[{ t:'Открыть настройки', primary:true, fn:sysOpen('bluetooth') }, { t:'Закрыть' }] });
+          });
+          act('Обновить список', '', 'Обновить', () => { load().then(() => { const f = bbox.querySelector('.srow[tabindex]'); if (f) f.focus(); }); }, icon('reload'));
+        });
+      };
+      load();
+      grp('Геймпады');
+      const pads = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean);
+      if (pads.length) pads.forEach(g => info(g.id.replace(/\s*\(.*$/, '').slice(0, 48), 'подключён', 'Стрелки — D‑pad или левый стик, A — OK, B — назад, Start — домой'));
+      else note('Геймпад не найден. Подключите по Bluetooth или USB и нажмите любую кнопку.');
+      tog('pad', 'Управление геймпадом', 'Перемещаться по лаунчеру кнопками геймпада');
+      grp('Пульт');
+      act('Проверка кнопок пульта', 'Нажимайте кнопки — здесь появится название клавиши. Двойное «Назад» — выход', 'Начать', () => {
+        dialog({ title:'Проверка кнопок', msg:'Нажмите любую кнопку пульта или клавиатуры', buttons:[{ t:'Закрыть', primary:true }] });
+        keyTest = { last:0 };
+      }, icon('remote'));
+      grp('Как подключить пульт или клавиатуру');
+      note('1. Переведите устройство в режим сопряжения: обычно нужно зажать кнопку Bluetooth на 3–5 секунд. У пультов Google TV — удерживать «Назад» и «Домой» около 5 секунд.');
+      note('2. Нажмите «Добавить устройство», в окне Windows выберите Bluetooth и найдите своё устройство в списке.');
+      note('3. Вернитесь сюда: устройство появится в списке. Стрелки и OK пульта сразу управляют лаунчером.');
+    } else if (sec === 'img') {
+      opt('scale', 'Размер интерфейса', 'Крупнее — удобнее читать с дивана', [['Мелкий', .85], ['Обычный', 1], ['Крупный', 1.15], ['Очень крупный', 1.3], ['Огромный', 1.5]]);
+      opt('brightness', 'Яркость интерфейса', 'Программное затемнение всего экрана', [['100%', 1], ['90%', .9], ['80%', .8], ['70%', .7], ['60%', .6], ['50%', .5]]);
+      opt('night', 'Ночной свет', 'Тёплые тона — меньше нагрузки на глаза вечером', [['Выкл', 0], ['Мягкий', .25], ['Тёплый', .45], ['Янтарный', .65]]);
+      opt('accent', 'Цвет акцента', 'Подсветка выбранных элементов', [['Синий', '#4c8dff', '#4c8dff'], ['Фиолетовый', '#8b5cf6', '#8b5cf6'], ['Зелёный', '#22c55e', '#22c55e'], ['Оранжевый', '#f59e0b', '#f59e0b'], ['Розовый', '#ec4899', '#ec4899']]);
+      tog('banners', 'Превью приложений', 'Картинки сервисов на плитках главного экрана', () => renderApps());
+      tog('glass', 'Эффект стекла', 'Размытие под панелями. Выключите на слабом ПК');
+      tog('contrast', 'Повышенная контрастность', 'Чётче границы, темнее панели');
+      grp('Анимации');
+      tog('anim', 'Анимации', 'Включение, выключение, запуск и закрытие приложений');
+      opt('launchAnim', 'Запуск приложений', 'Как открывается и закрывается сервис', [['Раскрытие из плитки', 'morph'], ['Круговое раскрытие', 'iris'], ['Плавное затухание', 'fade']]);
+      act('Посмотреть анимацию', 'Показать запуск приложения и включение экрана', 'Показать', () => playDemo(), icon('play'));
+      grp('Дисплей');
+      tog('fullscreen', 'Полный экран', 'Как на настоящем телевизоре (клавиша F11)', v => api && api.setFullscreen(v));
+      act('Разрешение, частота, HDR', 'Параметры экрана в настройках Windows', 'Открыть', sysOpen('display'), icon('image'));
+    } else if (sec === 'wall') {
+      const re = () => { renderPane(true); const f = $('#spane .srow[tabindex]'); if (f) f.focus(); };
+      opt('wallMode', 'Режим обоев', { photo:'Одна фотография на ваш выбор', album:'Фото сменяют друг друга по кругу', discover:'Каждый день своя подборка красивых мест, как в Windows', gradient:'Мягкие цветные переливы без фото' }[S.wallMode],
+          [['Фото', 'photo'], ['Альбом', 'album'], ['Рекомендации', 'discover'], ['Градиент', 'gradient']], re);
+      opt('clockStyle', 'Стиль часов', 'Часы на главном экране', [['Стеклянные', 'glass'], ['Тонкие', 'classic'], ['Скрыть', 'off']]);
+      tog('seconds', 'Секунды на часах', '', () => tick());
+      if (S.wallMode === 'album') opt('wallColl', 'Коллекция', '', [['Все', 'all'], ['Горы', 'mountains'], ['Природа', 'nature'], ['Океан', 'ocean'], ['Ночь', 'night'], ['Города', 'city']]);
+      if (S.wallMode === 'album' || S.wallMode === 'discover') opt('wallEvery', 'Менять каждые', '', [['30 секунд', 30], ['1 минуту', 60], ['5 минут', 300], ['15 минут', 900], ['1 час', 3600]]);
+      if (S.wallMode === 'gradient') opt('wall', 'Цветовая схема', '', [['Аврора', 'aurora', '#7c5cff'], ['Закат', 'sunset', '#ff7a45'], ['Океан', 'ocean', '#15aabf'], ['Лес', 'forest', '#40c057'], ['Графит', 'graphite', '#868e96']]);
+      else {
+        opt('wallDim', 'Затемнение', 'Чтобы текст читался на ярких фото', [['Нет', 0], ['Слабое', .12], ['Среднее', .2], ['Сильное', .36], ['Максимум', .5]]);
+        tog('wallMotion', 'Плавное движение', 'Фото медленно приближается, как в заставке');
+        tog('wallCaption', 'Подпись места', 'Название и место съёмки под часами');
+        act('Скачать подборку заранее', 'Обои будут работать без интернета', 'Скачать', async b => { let ok = 0; for (let i = 0; i < WALLS.length; i++) { b.textContent = `${i + 1} из ${WALLS.length}`; if (await loadWall(WALLS[i])) ok++; } b.textContent = `Готово: ${ok}`; }, icon('download'));
+      }
+      if (S.wallMode === 'photo') {
+        grp('Выберите фото');
+        const g = put(mk('div', 'wgrid'));
+        WALLS.forEach((w, i) => {
+          const c = mk('div', 'wth' + (S.wallPhoto === w.id ? ' on' : ''), `<span><b></b><small></small></span><i class="chk">${icon('check')}</i>`);
+          c.tabIndex = 0; c.style.setProperty('--i', i);
+          c.querySelector('b').textContent = w.t; c.querySelector('small').textContent = w.p;
+          g.appendChild(c); const im = new Image(); im.onload = () => { c.style.backgroundImage = `url("${im.src}")`; }; im.onerror = () => c.remove(); im.src = wurl(w, 520);
+          c.onclick = () => { S.wallPhoto = w.id; saveS(); applySettings(); g.querySelectorAll('.wth').forEach(x => x.classList.toggle('on', x === c)); };
+        });
+      }
+    } else if (sec === 'snd') {
+      const vol = slider('Громкость', 'Общая громкость Windows', () => 0, v => {
+        clearTimeout(vTimer); vTimer = setTimeout(() => api ? api.audio({ vol:v / 100 }) : DROID && DROID.setVolume(v / 100), 250); osd(`${icon('sound')} Громкость ${v}%`); }, icon('sound'));
+      const mute = mk('div', 'swt'), mr = R('Без звука', 'Полностью отключить звук', mute); mr.tabIndex = 0;
+      mr.onclick = async () => { if (!api && !DROID) return need(); const on = !mute.classList.contains('on'); mute.classList.toggle('on', on); if (api) await api.audio({ mute:on }); else DROID.setMute(on); };
+      if (api) api.audio({}).then(r => { if (r.error) return; vol._set(Math.round(r.vol * 100)); mute.classList.toggle('on', r.mute); });
+      else if (DROID) { vol._set(Math.round(DROID.getVolume() * 100)); mute.classList.toggle('on', !!DROID.getMute()); }
+      else note('Регулировка громкости Windows доступна в установленном приложении.');
+      act('Проверить звук', 'Короткий сигнал', 'Играть', () => clickSnd(true), icon('play'));
+      tog('uiSounds', 'Звуки интерфейса', 'Тихий щелчок при перемещении по экрану');
+      tog('bgAudio', 'Звук в фоне', 'Музыка и видео не замолкают, когда вы вернулись на главный экран', () => applyMute());
+      act('Устройство вывода звука', 'Колонки, HDMI, наушники — в настройках Windows', 'Открыть', sysOpen('sound'), icon('pc'));
+    } else if (sec === 'home') {
+      opt('startApp', 'Запускать при включении', 'Приложение, которое откроется сразу после старта', [['Главный экран', ''], ...homeApps.map(a => [a.name, a.url])]);
+      act('Добавить приложения', 'Каталог сервисов и свой сайт', 'Каталог', () => show('catalog'), icon('plus'));
+      act('Вернуть плитки по умолчанию', 'Сбросить набор и порядок приложений', 'Сбросить', b => { homeApps = DEFAULT_HOME.map(a => ({ ...a })); saveHome(); renderApps(); b.textContent = 'Готово'; setTimeout(() => renderPane(true), 600); }, icon('reload'));
+      grp('Порядок приложений');
+      note('Двигайте приложения стрелками или уберите ненужные. То же самое делает долгое нажатие OK на плитке.');
+      const abox = put(mk('div', 'slist'));
+      const draw = (fi, fk) => {
+        abox.innerHTML = '';
+        homeApps.forEach((a, i) => {
+          const r = mk('div', 'srow info arow', `<span class="rico">${a.special ? '<i class="cr" style="font-size:30px"></i>' : `<img src="${fav(a.domain)}" alt="">`}</span><div class="lb"><b></b></div><div class="ctl"></div>`);
+          r.querySelector('b').textContent = a.name; r.style.setProperty('--i', Math.min(i, 14));
+          const ctl = r.querySelector('.ctl');
+          [['back', 'Левее', -1], ['forward', 'Правее', 1], ['x', 'Убрать', 0]].forEach(([ic, tt, d], k) => {
+            const c = mk('span', 'chip' + (d === 0 ? ' danger' : ''), icon(ic)); c.tabIndex = 0; c.title = tt;
+            c.onclick = () => {
+              if (d === 0) { homeApps.splice(i, 1); saveHome(); renderApps(); draw(Math.min(i, homeApps.length - 1), 2); return; }
+              const j = i + d; if (j < 0 || j >= homeApps.length) return;
+              [homeApps[i], homeApps[j]] = [homeApps[j], homeApps[i]]; saveHome(); renderApps(); draw(j, k);
+            };
+            ctl.appendChild(c);
+          });
+          abox.appendChild(r);
+        });
+        if (fi !== undefined && abox.children[fi]) { const c = abox.children[fi].querySelectorAll('.chip')[fk]; if (c) c.focus(); }
+      };
+      draw();
+    } else if (sec === 'pwr') {
+      opt('autoSleep', 'Автоматический сон', 'Экран притухнет, если ничего не нажимать. Во время работы в браузере не срабатывает', [['Никогда', 0], ['Через 5 минут', 5], ['Через 15 минут', 15], ['Через 30 минут', 30], ['Через 1 час', 60]]);
+      opt('offTimer', 'Таймер выключения', 'Закроет лаунчер через заданное время', OFF_OPTS, v => { offAt = v ? Date.now() + v * 60000 : 0; toast(v ? `Выключение через ${v} мин` : 'Таймер выключения отменён'); });
+      opt('sleepDim', 'Затемнение в спящем режиме', '', [['Слабое', .6], ['Среднее', .8], ['Сильное', .92]]);
+      tog('sleepClock', 'Часы в спящем режиме', 'Тусклые часы на тёмном экране');
+      act('Спящий режим', 'Притушить экран прямо сейчас', 'Включить', () => setTimeout(sleepOn, 150), icon('moon'));
+      grp('Работа компьютера');
+      tog('keepAwake', 'Не отключать экран', 'Компьютер не уснёт, пока открыт лаунчер', v => api ? api.keepAwake(v) : DROID && DROID.keepAwake(v));
+      let lg, lr;
+      if (!DROID) {
+      lg = mk('div', 'swt'); lr = R('Запускать вместе с Windows', 'Лаунчер откроется сразу после включения компьютера', lg); lr.tabIndex = 0;
+      lr.onclick = async () => { if (!api) return need(); const on = await api.loginSet(!lg.classList.contains('on')); lg.classList.toggle('on', on); toast(on ? 'Автозапуск включён' : 'Автозапуск выключен'); };
+      if (api) api.loginGet().then(v => lg.classList.toggle('on', !!v));
+      }
+      act('Параметры питания Windows', 'Переход в сон и отключение экрана самой системой', 'Открыть', sysOpen('power'), icon('bolt'));
+      grp('Выключение');
+      act('Перезапустить лаунчер', 'Закроется и откроется заново', 'Перезапуск', () => api ? api.relaunch() : need(), icon('reload'));
+      act('Выключить лаунчер', 'Только эта программа, компьютер продолжит работать', 'Выключить', powerOff, icon('power'));
+      if (!DROID) {
+      act('Спящий режим компьютера', 'Windows перейдёт в сон', 'Усыпить ПК', () => confirmPc('Перевести компьютер в сон?', '', 'sleep', 'Усыпить'), icon('moon'));
+      act('Перезагрузить компьютер', 'Windows перезагрузится', 'Перезагрузка', () => confirmPc('Перезагрузить компьютер?', 'Несохранённые данные в других программах будут потеряны.', 'restart', 'Перезагрузить'), icon('reload'));
+      act('Выключить компьютер', 'Полное выключение Windows', 'Выключить ПК', () => confirmPc('Выключить компьютер?', 'Несохранённые данные в других программах будут потеряны.', 'shutdown', 'Выключить'), icon('power'));
+      }
+    } else if (sec === 'web') {
+      opt('search', 'Поисковая система', '', Object.entries(ENGINES).map(([k, v]) => [v[0], k]));
+      opt('pageZoom', 'Масштаб сайтов', 'Увеличьте, чтобы читать с дивана', [['80%', .8], ['100%', 1], ['115%', 1.15], ['130%', 1.3], ['150%', 1.5]]);
+      act('Закрыть все вкладки', `Сейчас открыто: ${tabs.length}`, 'Закрыть', b => { closeAll(); b.textContent = 'Готово'; }, icon('x'));
+      grp('Данные');
+      act('История посещений', '', 'Очистить', b => { history = []; store.set('tv.history', history); b.textContent = 'Готово'; }, icon('trash'));
+      act('Незаконченные фильмы', '', 'Очистить', b => { cont = []; store.set('tv.continue', cont); b.textContent = 'Готово'; }, icon('trash'));
+      act('Данные сайтов', 'Входы в аккаунты и куки', 'Очистить', async b => { if (api) await api.clearData(); b.textContent = 'Готово'; }, icon('trash'));
+      act('Кэш обоев и превью', 'Скачанные фотографии и картинки сервисов', 'Очистить', async b => { if (api) { await api.wallClear(); await api.bannerClear(); } bnMem.clear(); renderApps(); b.textContent = 'Готово'; }, icon('trash'));
+    } else if (sec === 'sys') {
+      grp('Дата и время');
+      opt('clock24', 'Формат времени', '', [['24 часа', true], ['12 часов', false]], () => tick());
+      info('Часовой пояс', Intl.DateTimeFormat().resolvedOptions().timeZone || 'авто', 'Берётся из Windows');
+      act('Дата и время Windows', 'Автонастройка по сети, часовой пояс', 'Открыть', sysOpen('time'), icon('time'));
+      grp('Язык');
+      info('Язык интерфейса', 'Русский');
+      act('Язык и регион Windows', '', 'Открыть', sysOpen('region'), icon('globe'));
+      grp('Экранная клавиатура');
+      opt('osk', 'Экранная клавиатура', 'Появляется на полях ввода сайтов', [['Авто', 'auto'], ['Выкл', 'off']]);
+      opt('oskLang', 'Раскладка по умолчанию', '', [['Русский', 'ru'], ['English', 'en']], v => { osk.lang = v; });
+      tog('hideCursor', 'Скрывать курсор мыши', 'Пропадает через несколько секунд без движения');
+      grp('Безопасность');
+      const setPin = () => askPin('Придумайте PIN-код (4–8 цифр)', v => { if (!/^\d{4,8}$/.test(v)) { toast('PIN должен состоять из 4–8 цифр'); return; } askPin('Повторите PIN-код', w => { if (w === v) { S.pin = v; saveS(); toast('PIN-код сохранён'); renderPane(true); } else toast('PIN-коды не совпали'); }); });
+      if (S.pin) {
+        act('Сменить PIN-код', 'Защищает вход в настройки', 'Сменить', () => askPin('Текущий PIN-код', v => { if (v === S.pin) setPin(); else toast('Неверный PIN-код'); }), icon('lock'));
+        act('Отключить PIN-код', 'Настройки снова будут открываться без пароля', 'Отключить', () => askPin('Текущий PIN-код', v => { if (v === S.pin) { S.pin = ''; saveS(); toast('PIN-код отключён'); renderPane(true); } else toast('Неверный PIN-код'); }), icon('lock'));
+      } else act('PIN-код на настройки', 'Чтобы дети не меняли параметры', 'Включить', setPin, icon('lock'));
+      grp('Специальные возможности');
+      opt('scale', 'Размер интерфейса', '', [['Мелкий', .85], ['Обычный', 1], ['Крупный', 1.15], ['Очень крупный', 1.3], ['Огромный', 1.5]]);
+      tog('contrast', 'Повышенная контрастность', '');
+      tog('anim', 'Анимации', 'Отключите, если они вызывают дискомфорт');
+    } else if (sec === 'about') {
+      const nm = R('Название телевизора', 'Так устройство будет называться в системе', val(S.deviceName), '', icon('info')); nm.tabIndex = 0;
+      nm.onclick = () => dialog({ title:'Название телевизора', input:{ ph:'Название', value:S.deviceName }, buttons:[{ t:'Сохранить', primary:true, fn:v => { v = v.trim(); if (v) { S.deviceName = v.slice(0, 32); saveS(); renderPane(true); } } }, { t:'Отмена' }] });
+      info('Версия', APP_VERSION);
+      const eng = R('Движок', '', val('…'), 'info'), os = R('Система', '', val('…'), 'info'), cpu = R('Процессор', '', val('…'), 'info'),
+            ram = R('Память', '', val('…'), 'info'), scr = R('Экран', '', val(`${screen.width}×${screen.height}`), 'info'), up = R('Компьютер работает', '', val('…'), 'info');
+      const setv = (r, t) => { r.querySelector('.v').textContent = t; };
+      grp('Хранилище');
+      const dbar = put(mk('div', 'dbar', '<div class="dtrack"><i></i></div><div class="dtxt">…</div>'));
+      const cache = R('Кэш лаунчера', 'Обои и картинки сервисов', val('…'), 'info');
+      if (api) api.info().then(i => setv(eng, `Chromium ${i.chrome.split('.')[0]}, Electron ${i.electron.split('.')[0]}`));
+      else setv(eng, 'Chromium');
+      if (api) api.sysInfo().then(i => {
+        setv(os, `${i.os} (${i.build})`); setv(cpu, `${i.cpu.replace(/\s+/g, ' ').trim()}, ${i.cores} потоков`);
+        setv(ram, `${gb(i.mem.total - i.mem.free)} из ${gb(i.mem.total)}`);
+        setv(scr, `${i.display.w}×${i.display.h}, ${i.display.hz} Гц, масштаб ${Math.round(i.display.sf * 100)}%`);
+        const h = Math.floor(i.up / 3600); setv(up, h >= 24 ? `${Math.floor(h / 24)} дн. ${h % 24} ч` : `${h} ч ${Math.floor(i.up / 60) % 60} мин`);
+        if (i.disk) { const used = i.disk.total - i.disk.free; dbar.querySelector('i').style.width = (used / i.disk.total * 100).toFixed(1) + '%'; dbar.querySelector('.dtxt').textContent = `Занято ${gb(used)} из ${gb(i.disk.total)}, свободно ${gb(i.disk.free)}`; }
+        else dbar.querySelector('.dtxt').textContent = 'Нет данных';
+        setv(cache, gb(i.cache));
+      }); else { setv(os, navigator.platform); setv(cpu, '—'); setv(ram, '—'); setv(up, '—'); dbar.querySelector('.dtxt').textContent = 'Нет данных'; setv(cache, '—'); }
+      act('Хранилище Windows', 'Очистка диска и контроль памяти', 'Открыть', sysOpen('storage'), icon('storage'));
+      grp('Сброс');
+      act('Перезапустить лаунчер', '', 'Перезапуск', () => api ? api.relaunch() : location.reload(), icon('reload'));
+      act('Сбросить настройки', 'Обои, цвета и параметры вернутся к исходным. Приложения и вход на сайтах останутся', 'Сбросить', () => dialog({ title:'Сбросить настройки?', msg:'Приложения на главном экране и данные сайтов останутся.', buttons:[{ t:'Отмена', primary:true }, { t:'Сбросить', danger:true, fn:() => { localStorage.removeItem('tv.settings'); location.reload(); } }] }), icon('reload'));
+      act('Сброс до заводских', 'Удалит всё: настройки, плитки, историю, входы на сайтах и кэш', 'Сбросить всё', () => dialog({ title:'Сброс до заводских настроек', msg:'Будут удалены все настройки, плитки, история, входы в аккаунты и скачанные обои. Это нельзя отменить.', buttons:[{ t:'Отмена', primary:true }, { t:'Удалить всё', danger:true, fn:async () => { if (api) { await api.clearData(); await api.wallClear(); await api.bannerClear(); } localStorage.clear(); location.reload(); } }] }), icon('trash'));
+    }
+  }
+  async function wifiAction(n, reload) {
+    const api = window.api;
+    const connect = async pass => {
+      toast(`Подключение к «${n.ssid}»…`);
+      const r = await api.wifiConnect({ ssid:n.ssid, pass, open:n.open, wpa3:n.wpa3 });
+      toast(r.ok ? `Подключено к «${n.ssid}»` : r.err === 'short' ? 'Пароль должен быть от 8 до 63 символов' : 'Не удалось подключиться. Проверьте пароль');
+      net(); reload();
+    };
+    const forget = async () => { await api.wifiForget(n.ssid); toast(`Сеть «${n.ssid}» забыта`); reload(); };
+    if (n.connected) return dialog({ title:n.ssid, msg:'Вы подключены к этой сети', buttons:[{ t:'Закрыть', primary:true }, { t:'Отключиться', fn:async () => { await api.wifiDisconnect(); net(); reload(); } }, { t:'Забыть сеть', danger:true, fn:forget }] });
+    if (n.saved) return dialog({ title:n.ssid, buttons:[{ t:'Подключиться', primary:true, fn:() => connect() }, { t:'Забыть сеть', danger:true, fn:forget }, { t:'Отмена' }] });
+    if (n.open) return dialog({ title:n.ssid, msg:'Сеть без пароля: данные могут быть не защищены.', buttons:[{ t:'Подключиться', primary:true, fn:() => connect('') }, { t:'Отмена' }] });
+    dialog({ title:`Пароль для «${n.ssid}»`, input:{ secret:true, ph:'Пароль Wi‑Fi' }, buttons:[{ t:'Подключиться', primary:true, fn:v => { if (v) connect(v); } }, { t:'Отмена' }] });
+  }
+
+  /* ---------- Сеть и питание ---------- */
+  if (DROID) {                                               // в подписях настроек вместо «Windows» пишем «Android»
+    const fix = n => { if (n.nodeType === 3) { if (n.nodeValue.includes('Windows')) n.nodeValue = n.nodeValue.replace(/Windows/g, 'Android'); } else if (n.childNodes) n.childNodes.forEach(fix); };
+    ['#spane', '#dlg'].forEach(q => { const el = $(q); if (el) new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(fix))).observe(el, { childList:true, subtree:true }); });
+  }
+  const wifi = $('#wifi');
+  const net = () => wifi.classList.toggle('off', !navigator.onLine);
+  addEventListener('online', net); addEventListener('offline', net); net();
+  let offing = false, offAt = 0;
+  function powerOff() {
+    if (offing) return; offing = true; sleeping = false; $('#sleep').classList.remove('on');
+    $('#veil').className = 'shut'; $('#app').classList.add('tv-off');
+    setTimeout(() => window.api ? window.api.quit() : DROID ? location.reload() : window.close(), S.anim ? 1350 : 50);
+  }
+  if (window.api) window.api.onPowerOff(powerOff);
+
+  /* ---------- Спящий режим: экран притухает, любая кнопка возвращает ---------- */
+  const sleepEl = $('#sleep');
+  function sleepOn() {
+    if (sleeping || offing) return;
+    sleepFocus = document.activeElement; closeOSK(false);
+    sleepEl.classList.toggle('noclock', !S.sleepClock);
+    sleeping = true; sleepAt = Date.now(); tick();
+    sleepEl.classList.add('on'); sleepEl.focus();
+    if (window.api) window.api.sleepState(true);
+  }
+  function wake() {
+    if (!sleeping) return;
+    sleeping = false; sleepEl.classList.remove('on');
+    if (window.api) window.api.sleepState(false);
+    setTimeout(() => { try { if (sleepFocus && document.contains(sleepFocus) && visible(sleepFocus)) sleepFocus.focus(); else focusDefault($('.view.active').id); } catch {} }, 60);
+  }
+  // Перехватываем любой ввод в фазе capture: первое нажатие только будит, действия не выполняет
+  ['keydown', 'mousedown', 'click', 'wheel', 'touchstart', 'contextmenu'].forEach(t => window.addEventListener(t, e => {
+    if (!sleeping) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    if (Date.now() - sleepAt > 450) wake();                 // защита от залипшего Enter, которым включили сон
+  }, true));
+  let mx = 0, my = 0;
+  window.addEventListener('mousemove', e => {
+    if (!sleeping) { mx = e.clientX; my = e.clientY; return; }
+    if (Date.now() - sleepAt > 800 && Math.hypot(e.clientX - mx, e.clientY - my) > 12) wake();
+    else if (Date.now() - sleepAt <= 800) { mx = e.clientX; my = e.clientY; }
+  }, true);
+  if (window.api) window.api.onWake(wake);
+  $('#app').addEventListener('animationend', e => { if (e.target.id === 'app' && e.animationName === 'tvOn') $('#app').classList.remove('tv-on'); });
+
+  /* ---------- Управление стрелками / пультом ---------- */
+  function scopeEls() {
+    const a = document.activeElement;
+    let roots;
+    if (osk.open && a && a.closest && a.closest('#osk')) roots = [oskEl];
+    else if (tilePop.classList.contains('on')) roots = [tilePop];
+    else if (dlg.classList.contains('on')) roots = [dlg];
+    else if (cp.classList.contains('on')) roots = [cp];
+    else if (addPop.classList.contains('on')) roots = [addPop];
+    else if (panel.classList.contains('open')) roots = [panel];
+    else roots = [$('.view.active'), $('#handle')];
+    return roots.flatMap(r => r.id === 'handle' ? [r] : [...r.querySelectorAll('[tabindex="0"], input')]).filter(visible);
+  }
+  function spatial(dir) {
+    const els = scopeEls(), a = document.activeElement;
+    if (!els.includes(a)) { els[0] && els[0].focus(); return; }
+    const ra = a.getBoundingClientRect(), ax = ra.left + ra.width / 2, ay = ra.top + ra.height / 2;
+    let best = null, bs = 1e9;
+    els.forEach(el => {
+      if (el === a) return;
+      const r = el.getBoundingClientRect(), dx = r.left + r.width / 2 - ax, dy = r.top + r.height / 2 - ay;
+      const horiz = dir === 'ArrowLeft' || dir === 'ArrowRight';
+      const along = dir === 'ArrowRight' ? dx : dir === 'ArrowLeft' ? -dx : dir === 'ArrowDown' ? dy : -dy;
+      const across = horiz ? Math.abs(dy) : Math.abs(dx);
+      if (along <= 4) return;
+      const sc = along + across * (horiz ? 3 : 2);
+      if (sc < bs) { bs = sc; best = el; }
+    });
+    if (best) { best.focus(); best.scrollIntoView({ block:'nearest', inline:'nearest' }); }
+  }
+  function goBackUI() {
+    const a = document.activeElement;
+    if (tilePop.classList.contains('on')) closeTileMenu();
+    else if (dlg.classList.contains('on')) { if (osk.open) closeOSK(true); else closeDialog(); }
+    else if (cp.classList.contains('on')) closeClock();
+    else if (addPop.classList.contains('on')) closeAdd();
+    else if (osk.open) closeOSK(true);
+    else if (panel.classList.contains('open')) closePanel();
+    else if ($('#settings').classList.contains('active') && a && a.closest && a.closest('#spane')) { const m = $('#smenu .smenu.on'); if (m) m.focus(); }
+    else if ($('#browser').classList.contains('active')) {
+      const t = activeTab(); let can = false;
+      if (t) { try { can = t.wv.canGoBack(); } catch {} }
+      can ? t.wv.goBack() : minimize();
+    } else if (!$('#home').classList.contains('active')) show('home');
+  }
+  let lp = null;                                           // долгое нажатие OK на плитке открывает меню
+  addEventListener('keyup', e => {
+    if (e.key === 'Enter' && lp) { const x = lp; lp = null; if (!x.done && document.activeElement === x.el) x.el.click(); }
+  });
+  addEventListener('keydown', e => {
+    const a = document.activeElement, inInput = a && a.tagName === 'INPUT';
+    if (e.key === 'Escape') { goBackUI(); return; }
+    if (inInput) {
+      if (e.key === 'ArrowDown') { e.preventDefault();
+        if (osk.open) { const k = oskKeys.querySelector('[data-ch]'); if (k) k.focus(); }
+        else if (a.closest('.bar') && activeTab()) activeTab().wv.focus(); else spatial('ArrowDown'); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); spatial('ArrowUp'); }
+      return;
+    }
+    if (e.key === 'Backspace') { e.preventDefault(); if (osk.open) backspace(); else goBackUI(); return; }
+    if (osk.open && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); typeStr(e.key); return; }
+    const isTile = a && a.classList && a.classList.contains('tile') && a.dataset.key;
+    if (e.key === 'Enter' && isTile) {
+      e.preventDefault();
+      if (e.repeat) { if (lp && !lp.done) { lp.done = true; openTileMenu(a); } } else lp = { el:a, done:false };
+      return;
+    }
+    if ((e.key === 'ContextMenu' || e.key === 'F2') && isTile) { e.preventDefault(); openTileMenu(a); return; }
+    if (e.key === 'Enter' && a && a.tabIndex === 0) { a.click(); return; }
+    if (e.key === 'Delete' && a) {
+      if (a.classList.contains('card')) { closeTab(+a.dataset.id); return; }
+      if (isTile) { removeHome(a.dataset.key); return; }
+      if (a.dataset && a.dataset.kind === 'hist') { history = history.filter(h => h.url !== a.dataset.url); store.set('tv.history', history); renderLibrary(); return; }
+      if (a.dataset && a.dataset.kind === 'cont') { cont = cont.filter(h => h.url !== a.dataset.url); store.set('tv.continue', cont); renderLibrary(); return; }
+    }
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && a && a._adj) { e.preventDefault(); a._adj(e.key === 'ArrowRight' ? 1 : -1); return; }
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      if (e.key === 'ArrowDown' && a && a.closest && a.closest('.bar') && activeTab() && !osk.open) { activeTab().wv.focus(); return; }
+      spatial(e.key);
+    }
+  });
+
+
+  /* ---------- Обои: фото из интернета (кэшируются на диск), альбом, ежедневные рекомендации ---------- */
+  const WALLS = [
+    { id:'rockies',  s:'px', f:10762607, k:'mountains', t:'Скалистые горы в облаках', p:'Канада' },
+    { id:'rockies2', s:'px', f:10762594, k:'mountains', t:'Хвойный лес и горы', p:'Канадские Скалистые горы' },
+    { id:'rockies3', s:'px', f:2987921,  k:'mountains', t:'Горы над лесом', p:'Альберта, Канада' },
+    { id:'banff',    s:'px', f:28365735, k:'mountains', t:'Горы Банфа', p:'Банф, Канада' },
+    { id:'snowrange', f:'photo-1506905925346-21bda4d32df4', k:'mountains', t:'Заснеженный хребет', p:'Скалистые горы' },
+    { id:'peak',     f:'photo-1464822759023-fed622ff2c3b', k:'mountains', t:'Горная вершина', p:'Альпы' },
+    { id:'summit',   f:'photo-1454496522488-7a8e488e8606', k:'mountains', t:'Снежный пик', p:'Горы' },
+    { id:'ridge',    f:'photo-1486870591958-9b9d0d1dda99', k:'mountains', t:'Горные хребты', p:'Горы' },
+    { id:'meadow',   f:'photo-1472396961693-142e6e269027', k:'mountains', t:'Луг у подножия гор', p:'Горная долина' },
+    { id:'valley',   f:'photo-1469474968028-56623f02e42e', k:'nature', t:'Лучи света в долине', p:'Горная долина' },
+    { id:'lake',     f:'photo-1501785888041-af3ef285b470', k:'nature', t:'Горное озеро', p:'Скалистые горы' },
+    { id:'yosemite', f:'photo-1506744038136-46273834b3fb', k:'nature', t:'Долина Йосемити', p:'Калифорния, США' },
+    { id:'mist',     f:'photo-1470071459604-3b5ec3a7fe05', k:'nature', t:'Туманный лес', p:'Утренний лес' },
+    { id:'waterfall', f:'photo-1433086966358-54859d0ed716', k:'nature', t:'Водопад', p:'Дикая природа' },
+    { id:'hills',    f:'photo-1472214103451-9374bd1c798e', k:'nature', t:'Зелёные холмы', p:'Закат' },
+    { id:'beach',    f:'photo-1507525428034-b723cf961d3e', k:'ocean', t:'Тропический пляж', p:'Океан' },
+    { id:'ocean',    f:'photo-1505118380757-91f5f5632de0', k:'ocean', t:'Океан на рассвете', p:'Открытое море' },
+    { id:'wave',     f:'photo-1500375592092-40eb2168fd21', k:'ocean', t:'Волна', p:'Побережье' },
+    { id:'starsmt',  f:'photo-1519681393784-d120267933ba', k:'night', t:'Звёздная ночь в горах', p:'Ночное небо' },
+    { id:'milkyway', f:'photo-1419242902214-272b3f66ee7a', k:'night', t:'Млечный путь', p:'Тёмное небо' },
+    { id:'aurora',   f:'photo-1531366936337-7c912a4589a7', k:'night', t:'Северное сияние', p:'Север' },
+    { id:'citynight', f:'photo-1477959858617-67f85cf4f1df', k:'city', t:'Город вечером', p:'Мегаполис' },
+    { id:'cityglow', f:'photo-1480714378408-67cf0d13bc1b', k:'city', t:'Огни большого города', p:'Ночной город' }
+  ];
+  const wurl = (w, width) => w.s === 'px' ? `https://images.pexels.com/photos/${w.f}/pexels-photo-${w.f}.jpeg?auto=compress&cs=tinysrgb&w=${width}` : `https://images.unsplash.com/${w.f}?auto=format&fit=crop&w=${width}&q=80`;
+  const wp = [$('#wpA'), $('#wpB')], badW = new Map();
+  let wpi = 0, wallTimer = null, wallIdx = 0, wallSig = '', curWall = null;
+  const isBad = w => badW.has(w.id) && Date.now() - badW.get(w.id) < 300000;
+  async function loadWall(w) {                          // сначала диск-кэш (быстро и без интернета), потом сеть
+    if (isBad(w)) return null;
+    let src = null;
+    try { src = window.api ? await window.api.wallGet(w.id, wurl(w, 2560)) : wurl(w, 2560); } catch {}
+    if (!src) { badW.set(w.id, Date.now()); return null; }
+    return new Promise(res => { const im = new Image(); im.onload = () => res(src); im.onerror = () => { badW.set(w.id, Date.now()); res(null); }; im.src = src; });
+  }
+  async function showWall(w) {
+    const src = await loadWall(w); if (!src) return false;
+    const nx = wp[1 - wpi];
+    nx.style.backgroundImage = `url("${src}")`;
+    nx.classList.remove('kb'); void nx.offsetWidth; if (S.wallMotion) nx.classList.add('kb');
+    nx.classList.add('on'); wp[wpi].classList.remove('on'); wpi = 1 - wpi;
+    document.body.classList.add('photo'); curWall = w; setCaption(); return true;
+  }
+  function setCaption() {
+    const c = $('#cwCap');
+    if (!curWall || !S.wallCaption || S.wallMode === 'gradient') { c.classList.remove('on'); return; }
+    c.innerHTML = `${icon('pin')}<span></span>`; c.querySelector('span').textContent = `${curWall.t}, ${curWall.p}`; c.classList.add('on');
+  }
+  function wallPool() {
+    if (S.wallMode === 'album') return WALLS.filter(w => (S.wallColl === 'all' || w.k === S.wallColl) && !isBad(w));
+    const d = new Date(); let seed = d.getFullYear() * 1000 + Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 864e5);
+    const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    const a = WALLS.filter(w => !isBad(w));                         // каждый день своя подборка
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+  }
+  async function stepWall() {
+    const pool = wallPool(); if (!pool.length) return;
+    for (let k = 0; k < pool.length; k++) {
+      const w = pool[(wallIdx + k) % pool.length];
+      if (await showWall(w)) { wallIdx = (wallIdx + k + 1) % pool.length; return; }
+    }
+  }
+  function applyWall() {
+    const sig = [S.wallMode, S.wallPhoto, S.wallColl, S.wallEvery, S.wallMotion].join('|');
+    if (sig === wallSig) { setCaption(); return; }
+    wallSig = sig; clearInterval(wallTimer);
+    if (S.wallMode === 'gradient') { wp.forEach(e => e.classList.remove('on')); document.body.classList.remove('photo'); curWall = null; setCaption(); return; }
+    if (S.wallMode === 'photo') {
+      const pick = WALLS.find(w => w.id === S.wallPhoto) || WALLS[0];
+      (async () => { for (const w of [pick, ...WALLS.filter(x => x !== pick)]) if (await showWall(w)) break; })();
+      return;
+    }
+    wallIdx = Math.floor(Date.now() / (S.wallEvery * 1000)) % Math.max(1, wallPool().length);
+    stepWall(); wallTimer = setInterval(stepWall, S.wallEvery * 1000);
+  }
+
+  /* ---------- Автосон, таймер выключения, курсор, звуки, подсказки, геймпад ---------- */
+  let lastInput = Date.now();
+  ['keydown', 'mousedown', 'mousemove', 'wheel', 'touchstart'].forEach(t => addEventListener(t, () => { lastInput = Date.now(); }, true));
+  setInterval(() => {
+    if (offing) return;
+    if (offAt && Date.now() >= offAt) { offAt = 0; powerOff(); return; }
+    if (S.autoSleep && !sleeping && Date.now() - lastInput > S.autoSleep * 60000 && !(activeTab() && $('#browser').classList.contains('active'))) sleepOn();
+  }, 10000);
+  let curT = 0;
+  addEventListener('mousemove', () => { document.body.classList.remove('nocursor'); clearTimeout(curT); if (S.hideCursor) curT = setTimeout(() => document.body.classList.add('nocursor'), 3500); });
+  let actx = null;
+  function clickSnd(force) {
+    if ((!S.uiSounds && !force) || sleeping) return;
+    try {
+      actx = actx || new AudioContext(); const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+      o.type = 'sine'; o.frequency.value = 920; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.05, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + .12);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + .14);
+    } catch {}
+  }
+  document.addEventListener('focusin', e => { if (e.target.matches && e.target.matches('[tabindex="0"]')) clickSnd(); });
+  let toastT = 0, osdT = 0;
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2800); }
+  function osd(html) { const o = $('#osd'); o.innerHTML = html; o.classList.add('on'); clearTimeout(osdT); osdT = setTimeout(() => o.classList.remove('on'), 1400); }
+
+  /* ---------- Меню плитки: открыть, сдвинуть, убрать (долгое нажатие OK или правая кнопка) ---------- */
+  const tilePop = $('#tilePop'); let menuKey = null;
+  const tileEl = key => document.querySelector(`#apps .tile[data-key="${CSS.escape(key)}"]`);
+  function openTileMenu(el) {
+    const a = homeApps.find(h => h.url === el.dataset.key); if (!a) return;
+    menuKey = a.url; $('#tmTitle').textContent = a.name; tilePop.classList.add('on'); setTimeout(() => $('#tmOpen').focus(), 60);
+  }
+  function closeTileMenu(refocus = true) { tilePop.classList.remove('on'); if (refocus && menuKey) { const f = tileEl(menuKey); if (f) f.focus(); } }
+  function moveHome(key, d) {
+    const i = homeApps.findIndex(h => h.url === key), j = i + d;
+    if (i < 0 || j < 0 || j >= homeApps.length) { const f = tileEl(key); if (f) f.focus(); return; }
+    [homeApps[i], homeApps[j]] = [homeApps[j], homeApps[i]]; saveHome(); renderApps(); const f = tileEl(key); if (f) f.focus();
+  }
+  function removeHome(key) {
+    const a = homeApps.find(h => h.url === key); if (!a) return;
+    homeApps = homeApps.filter(h => h.url !== key); saveHome(); renderApps();
+    const t = $('#apps .tile'); if (t) t.focus();
+    toast(`«${a.name}» убрано. Вернуть можно кнопкой «Добавить»`);
+  }
+  $('#tmOpen').onclick = () => { const k = menuKey; closeTileMenu(false); const t = tileEl(k); if (t) t.click(); };
+  $('#tmL').onclick = () => { const k = menuKey; closeTileMenu(false); moveHome(k, -1); };
+  $('#tmR').onclick = () => { const k = menuKey; closeTileMenu(false); moveHome(k, 1); };
+  $('#tmDel').onclick = () => { const k = menuKey; closeTileMenu(false); removeHome(k); };
+
+  /* ---------- Геймпад: D‑pad / стик — стрелки, A — OK, B — назад, Start — домой ---------- */
+  addEventListener('gamepadconnected', e => toast('Геймпад подключён: ' + e.gamepad.id.replace(/\s*\(.*$/, '').slice(0, 32)));
+  const gpHeld = {};
+  function gpKey(k) {
+    if (sleeping) { wake(); return; }
+    if (k === 'Home') { show('home'); return; }
+    const el = document.activeElement || document.body;
+    el.dispatchEvent(new KeyboardEvent('keydown', { key:k, bubbles:true, cancelable:true }));
+    if (k === 'Enter') el.dispatchEvent(new KeyboardEvent('keyup', { key:k, bubbles:true }));
+  }
+  function gpLoop() {
+    if (S.pad && !offing) {
+      const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find(Boolean);
+      if (g) {
+        const b = i => g.buttons[i] && g.buttons[i].pressed, ax = g.axes, now = performance.now();
+        const st = { ArrowLeft:b(14) || ax[0] < -.6, ArrowRight:b(15) || ax[0] > .6, ArrowUp:b(12) || ax[1] < -.6, ArrowDown:b(13) || ax[1] > .6, Enter:b(0), Escape:b(1), Home:b(9) };
+        for (const k in st) {
+          if (st[k]) { const p = gpHeld[k]; if (!p || (k.startsWith('Arrow') && now - p.t > (p.rep ? 110 : 380))) { gpHeld[k] = { t:now, rep:!!p }; gpKey(k); } }
+          else delete gpHeld[k];
+        }
+      }
+    }
+    requestAnimationFrame(gpLoop);
+  }
+  requestAnimationFrame(gpLoop);
+
+  applySettings(); renderApps(); renderLibrary(); renderStart();
+  osk.lang = S.oskLang;
+  if (S.fullscreen && window.api) window.api.setFullscreen(true);
+  if (S.keepAwake && window.api) window.api.keepAwake(true);
+  const bootMs = S.anim ? 3000 : 50;
+  setTimeout(() => { $('#veil').className = 'done'; $('#app').classList.remove('tv-on'); }, bootMs);
+  setTimeout(() => focusDefault('home'), S.anim ? 1900 : 100);
+  setTimeout(() => {                                     // приложение, которое открывается при включении
+    if (!S.startApp) return;
+    const a = homeApps.find(h => h.url === S.startApp);
+    if (a) a.special ? openBrowser() : openSite(a.url);
+  }, bootMs + 100);
+</script>
+</body>
+</html>
